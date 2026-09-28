@@ -1,0 +1,3 @@
+cd "/Users/wanlin/Documents/Master Thesis/FAG_SENT_Viewer"
+
+/opt/anaconda3/envs/aagnet-mac/bin/python fag_sent_dash/app.py

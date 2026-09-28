@@ -1,0 +1,19 @@
+/Master Thesis/CoAG_Viewer/coag_cache/
+/Master Thesis/datasets/
+/Master Thesis/FAG_SENT_Viewer/web_cache/
+/Master Thesis/Generation_Viewer/data/
+/Master Thesis/Generation_Viewer/web_cache/
+/Master Thesis/geometry_reconstruct_viewer/data/
+/Master Thesis/geometry_reconstruct_viewer/reconstruction_cache/
+/Master Thesis/geometry_reconstruct_viewer/web_cache/
+/Master Thesis/MF_Explorer/data/
+/Master Thesis/MF_Explorer/generalized_main_topology_output/
+/Master Thesis/MF_Explorer/generalized_main_topology_surface_aware_output/
+/Master Thesis/MF_Explorer/output/
+/Master Thesis/MF_Explorer/web_cache/
+/Master Thesis/Seed_Extractor/output/
+/Master Thesis/Seed_Extractor/output_space/
+/Master Thesis/transformer demo/data
+/Master Thesis/slides
+*.pyc
+*.docx

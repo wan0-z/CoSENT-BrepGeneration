@@ -1,0 +1,411 @@
+{
+  "schema_version": "1.0-surface-space",
+  "description": "Oriented surface-attributed graph seeds. SAG matching locates support surfaces; face constraints select maximal collision-free topological-face sets.",
+  "space_models": {
+    "global_oriented_support_cell": "Planes and complete cylinders define a cell through oriented analytic support fields.",
+    "trimmed_boundary_cell": "At least one trimmed cylinder contributes its finite angular/UV boundary to the cell."
+  },
+  "surface_graph_schema": {
+    "node": {
+      "id": "seed-local role id",
+      "role": "geometric role",
+      "surface_type": "plane | cylinder",
+      "trimmed": "whether the finite angular/UV domain is part of the seed",
+      "membership": "all strict-cosurface topological faces with the same representative direction"
+    },
+    "representative_direction": {
+      "plane": "oriented topological normal pointing to the selected feature-space side",
+      "cylinder": "sigma sign for which sigma*grad(phi) agrees with the topological outward normal; opposite sigma values create separate nodes"
+    },
+    "edge_code": {
+      "format": "five-bit multi-hot abcde",
+      "00_plane_plane": "bit3 parallel; bit4 opposite directions when bit3=1; bit5 perpendicular",
+      "01_plane_cylinder": "bit3 axis perpendicular to plane normal; bit4 tangent when bit3=1; bit5 axis parallel to plane normal",
+      "11_cylinder_cylinder": "bit3 axes parallel; bit4 coaxial when bit3=1; bit5 equal radii"
+    },
+    "graph_policy": {
+      "complete_typed_edges": true,
+      "same_underlying_support_nodes_are_not_connected": true,
+      "rebuild_after_each_accepted_instance": true
+    }
+  },
+  "matching_policy": {
+    "complexity_order": ["node_count descending", "cylinder_node_count descending", "edge_one_bit_sum descending", "category_id ascending"],
+    "surface_stage": "Group oriented support surfaces, build the SAG, match a seed subgraph, then apply surface/group constraints.",
+    "face_stage": "Search still-unlabelled member-face combinations, retain every required role, and accept a maximal valid collision-free set.",
+    "collision_policy": {
+      "instance_envelope": "AABB of all proposed instance faces",
+      "extension_ratio": 0.1,
+      "extension_rule": "extend by 0.1 of the corresponding envelope extent along every required recession direction; through directions extend on both sides",
+      "test": "Volume(clipped_recession_volume intersect part_solid) <= tolerance after an inward boundary offset",
+      "semantic_cavity_evidence_required": false
+    },
+    "ownership_policy": "Label accepted faces, remove them from their surface nodes, delete empty nodes, rebuild the SAG, and continue with the next candidate."
+  },
+  "features": [
+    {
+      "category_id":1,
+      "name":"through_hole",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":false}],
+      "edges":[],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":
+      {"cylindrical_angular_span":
+      {"role":"cylindrical_wall",
+      "operator":">",
+      "radians":3.141592653589793},
+      "recession_volume":
+      {"type":"full_cylinder_axis_bbox_extension",
+      "directions":"both",
+      "extension_ratio":0.1},
+      "all_boundaries_active":true,
+      "maximize_face_set":true,
+      "collision_free":true}},
+
+    {
+      "category_id":2,
+      "name":"triangular_passage",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"},
+      {"nodes":[0,2],"code":"00000"},
+      {"nodes":[1,2],"code":"00000"}],
+      "surface_constraints":
+      {"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},
+      "maximize_face_set":true,
+      "collision_free":true}},
+
+    {
+      "category_id":3,
+      "name":"rectangular_passage","space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[0,3],"code":"00001"},
+      {"nodes":[1,2],"code":"00001"},
+      {"nodes":[1,3],"code":"00110"},
+      {"nodes":[2,3],"code":"00001"}],"surface_constraints":
+      {"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
+      "face_constraints":
+      {"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":4,
+      "name":"6sides_passage","space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
+      {"id":4,"role":"side_4","surface_type":"plane","trimmed":false},
+      {"id":5,"role":"side_5","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"},
+      {"nodes":[0,2],"code":"00000"},
+      {"nodes":[0,3],"code":"00110"},
+      {"nodes":[0,4],"code":"00000"},
+      {"nodes":[0,5],"code":"00000"},
+      {"nodes":[1,2],"code":"00000"},
+      {"nodes":[1,3],"code":"00000"},
+      {"nodes":[1,4],"code":"00110"},
+      {"nodes":[1,5],"code":"00000"},
+      {"nodes":[2,3],"code":"00000"},
+      {"nodes":[2,4],"code":"00000"},
+      {"nodes":[2,5],"code":"00110"},
+      {"nodes":[3,4],"code":"00000"},
+      {"nodes":[3,5],"code":"00000"},
+      {"nodes":[4,5],"code":"00000"}],"surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3,4,5],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":5,
+      "name":"triangular_through_slot","space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"}],"surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_intersection_axis","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":6,
+      "name":"rectangular_through_slot",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"bottom","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_1","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[1,2],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_slot_axis_and_open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":7,
+      "name":"circular_through_slot",
+      "space_model":"trimmed_boundary_cell",
+      "nodes":
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":true}],
+      "edges":[],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":"<=","radians":3.141592653589793},"recession_volume":{"type":"full_cylinder_axis_bbox_extension","directions":"both","extension_ratio":0.1},
+      "all_boundaries_active":true,
+      "maximize_face_set":true,
+      "collision_free":true}},
+
+    {
+      "category_id":8,
+      "name":"rectangular_through_step",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"floor","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"wall","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":9,
+      "name":"2sides_through_step",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"wall_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"wall_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"floor","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"},
+      {"nodes":[0,2],"code":"00001"},
+      {"nodes":[1,2],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":11,
+      "name":"Oring",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"outer_cylindrical_wall","surface_type":"cylinder","trimmed":false},
+      {"id":1,"role":"annular_bottom","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"inner_cylindrical_wall","surface_type":"cylinder","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01001"},
+      {"nodes":[0,2],"code":"11110"},
+      {"nodes":[1,2],"code":"01001"}],
+      "surface_constraints":{"group_constraints":[{"type":"radius_order","larger":0,"smaller":2}]},
+      "face_constraints":{"recession_volume":{"type":"annular_cell_bbox_extension","directions":"open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":12,
+      "name":"blind_hole",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":false},
+      {"id":1,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":">","radians":3.141592653589793},"recession_volume":{"type":"full_cylinder_axis_bbox_extension","directions":"open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":13,
+      "name":"triangular_pocket",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"},
+      {"nodes":[0,2],"code":"00000"},
+      {"nodes":[1,2],"code":"00000"},
+      {"nodes":[0,3],"code":"00001"},
+      {"nodes":[1,3],"code":"00001"},
+      {"nodes":[2,3],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":3,"side_nodes":[0,1,2]}]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":14,
+      "name":"rectangular_pocket",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
+      {"id":4,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[0,3],"code":"00001"},
+      {"nodes":[1,2],"code":"00001"},
+      {"nodes":[1,3],"code":"00110"},
+      {"nodes":[2,3],"code":"00001"},
+      {"nodes":[0,4],"code":"00001"},
+      {"nodes":[1,4],"code":"00001"},
+      {"nodes":[2,4],"code":"00001"},
+      {"nodes":[3,4],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":4,"side_nodes":[0,1,2,3]}]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":15,
+      "name":"6sides_pocket",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
+      {"id":4,"role":"side_4","surface_type":"plane","trimmed":false},
+      {"id":5,"role":"side_5","surface_type":"plane","trimmed":false},
+      {"id":6,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00000"},
+      {"nodes":[0,2],"code":"00000"},
+      {"nodes":[0,3],"code":"00110"},
+      {"nodes":[0,4],"code":"00000"},
+      {"nodes":[0,5],"code":"00000"},
+      {"nodes":[1,2],"code":"00000"},
+      {"nodes":[1,3],"code":"00000"},
+      {"nodes":[1,4],"code":"00110"},
+      {"nodes":[1,5],"code":"00000"},
+      {"nodes":[2,3],"code":"00000"},
+      {"nodes":[2,4],"code":"00000"},
+      {"nodes":[2,5],"code":"00110"},
+      {"nodes":[3,4],"code":"00000"},
+      {"nodes":[3,5],"code":"00000"},
+      {"nodes":[4,5],"code":"00000"},
+      {"nodes":[0,6],"code":"00001"},
+      {"nodes":[1,6],"code":"00001"},
+      {"nodes":[2,6],"code":"00001"},
+      {"nodes":[3,6],"code":"00001"},
+      {"nodes":[4,6],"code":"00001"},
+      {"nodes":[5,6],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3,4,5],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":6,"side_nodes":[0,1,2,3,4,5]}]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":16,
+      "name":"circular_end_pocket",
+      "space_model":"trimmed_boundary_cell",
+      "nodes":
+      [{"id":0,"role":"straight_side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"circular_end_0","surface_type":"cylinder","trimmed":true},
+      {"id":2,"role":"straight_side_1","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"circular_end_1","surface_type":"cylinder","trimmed":true},
+      {"id":4,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01110"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[0,3],"code":"01110"},
+      {"nodes":[0,4],"code":"00001"},
+      {"nodes":[1,2],"code":"01110"},
+      {"nodes":[1,3],"code":"11101"},
+      {"nodes":[1,4],"code":"01001"},
+      {"nodes":[2,3],"code":"01110"},
+      {"nodes":[2,4],"code":"00001"},
+      {"nodes":[3,4],"code":"01001"}],
+      "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2,3],"all_boundaries_active":true}]},
+      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":17,
+      "name":"rectangular_blind_slot","space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"back_wall","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"side_1","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[0,3],"code":"00001"},
+      {"nodes":[1,2],"code":"00001"},
+      {"nodes":[1,3],"code":"00001"},
+      {"nodes":[2,3],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":18,
+      "name":"v_circular_end_blind_slot",
+      "space_model":"trimmed_boundary_cell",
+      "nodes":
+      [{"id":0,"role":"straight_side_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"circular_end","surface_type":"cylinder","trimmed":true},
+      {"id":2,"role":"straight_side_1","surface_type":"plane","trimmed":false},
+      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01110"},
+      {"nodes":[0,2],"code":"00110"},
+      {"nodes":[0,3],"code":"00001"},
+      {"nodes":[1,2],"code":"01110"},
+      {"nodes":[1,3],"code":"01001"},
+      {"nodes":[2,3],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2],"all_boundaries_active":true}]},
+      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":19,
+      "name":"h_circular_end_blind_slot",
+      "space_model":"trimmed_boundary_cell",
+      "nodes":
+      [{"id":0,"role":"circular_end_0","surface_type":"cylinder","trimmed":true},
+      {"id":1,"role":"straight_side","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"circular_end_1","surface_type":"cylinder","trimmed":true},
+      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01110"},
+      {"nodes":[0,2],"code":"11101"},
+      {"nodes":[0,3],"code":"01001"},
+      {"nodes":[1,2],"code":"01110"},
+      {"nodes":[1,3],"code":"00001"},
+      {"nodes":[2,3],"code":"01001"}],
+      "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2],"all_boundaries_active":true}]},
+      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":21,
+      "name":"circular_blind_step",
+      "space_model":"trimmed_boundary_cell",
+      "nodes":
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":true},
+      {"id":1,"role":"floor","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"01001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":"<=","radians":3.141592653589793},"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+
+    {
+      "category_id":22,
+      "name":"rectangular_blind_step",
+      "space_model":"global_oriented_support_cell",
+      "nodes":
+      [{"id":0,"role":"wall_0","surface_type":"plane","trimmed":false},
+      {"id":1,"role":"wall_1","surface_type":"plane","trimmed":false},
+      {"id":2,"role":"floor","surface_type":"plane","trimmed":false}],
+      "edges":
+      [{"nodes":[0,1],"code":"00001"},
+      {"nodes":[0,2],"code":"00001"},
+      {"nodes":[1,2],"code":"00001"}],
+      "surface_constraints":{"group_constraints":[]},
+      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}}
+  ]
+}

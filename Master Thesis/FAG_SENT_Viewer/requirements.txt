@@ -1,0 +1,9 @@
+dash>=2.17
+plotly>=5.22
+networkx>=3.2
+numpy>=1.24
+scipy>=1.10
+# Choose ONE STEP backend:
+# Recommended on conda: conda install -c conda-forge pythonocc-core
+pythonocc-core>=7.7; platform_system!='Windows'
+# Alternative fallback if you prefer cadquery/OCP; install manually if pythonocc-core is unavailable.

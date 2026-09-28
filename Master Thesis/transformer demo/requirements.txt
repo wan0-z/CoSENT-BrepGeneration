@@ -1,0 +1,8 @@
+# OCC and the existing extraction dependencies come from aagnet-mac.
+numpy>=1.24
+networkx>=3
+scipy>=1.10
+torch>=2.0
+tensorboard==2.21.0
+dash>=4.4,<5
+plotly>=6.9,<7

@@ -1,0 +1,2 @@
+/opt/anaconda3/envs/aagnet-mac/bin/python prepare_sample.py 20221123_142528_10 --force
+/opt/anaconda3/envs/aagnet-mac/bin/python app.py 20221123_142528_10
