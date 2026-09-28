@@ -2,15 +2,14 @@
   "schema_version": "1.0-surface-space",
   "description": "Oriented surface-attributed graph seeds. SAG matching locates support surfaces; face constraints select maximal collision-free topological-face sets.",
   "space_models": {
-    "global_oriented_support_cell": "Planes and complete cylinders define a cell through oriented analytic support fields.",
-    "trimmed_boundary_cell": "At least one trimmed cylinder contributes its finite angular/UV boundary to the cell."
-  },
+      "global_oriented_support_cell": "Intersection of oriented analytic plane/cylinder regions. Cylinder trim eligibility is independent of this construction.",
+      "trimmed_boundary_cell": "A fixed support/trim-branch mapping defines a 2D Minkowski section, extruded along the bottom normal. Selected member faces do not redefine the section."
+    },
   "surface_graph_schema": {
     "node": {
       "id": "seed-local role id",
       "role": "geometric role",
       "surface_type": "plane | cylinder",
-      "trimmed": "whether the finite angular/UV domain is part of the seed",
       "membership": "all strict-cosurface topological faces with the same representative direction"
     },
     "representative_direction": {
@@ -30,66 +29,147 @@
     }
   },
   "matching_policy": {
-    "complexity_order": ["node_count descending", "cylinder_node_count descending", "edge_one_bit_sum descending", "category_id ascending"],
-    "surface_stage": "Group oriented support surfaces, build the SAG, match a seed subgraph, then apply surface/group constraints.",
-    "face_stage": "Search still-unlabelled member-face combinations, retain every required role, and accept a maximal valid collision-free set.",
-    "collision_policy": {
-      "instance_envelope": "AABB of all proposed instance faces",
-      "extension_ratio": 0.1,
-      "extension_rule": "extend by 0.1 of the corresponding envelope extent along every required recession direction; through directions extend on both sides",
-      "test": "Volume(clipped_recession_volume intersect part_solid) <= tolerance after an inward boundary offset",
-      "semantic_cavity_evidence_required": false
+      "complexity_order": [
+        "node_count descending",
+        "cylinder_node_count descending",
+        "edge_one_bit_sum descending",
+        "category_id ascending"
+      ],
+      "surface_stage": "Group oriented support surfaces, build the SAG, match a seed subgraph, then apply surface/group constraints.",
+      "face_stage": "Search still-unlabelled member-face combinations, retain every required role, and accept a maximal valid collision-free set.",
+      "collision_policy": {
+        "instance_envelope": "AABB in the fixed feature local CRS, enclosing the complete selected topological faces (analytic extrema, or conservative tessellation bounds), not a model-axis AABB.",
+        "extension_ratio": 0.1,
+        "extension_rule": "For each local axis j: L_j=max_j-min_j; expanded limits are min_j-alpha*L_j and max_j+alpha*L_j. Expand all six sides; lengths become (1+2*alpha)*L_j.",
+        "finite_collision_domain": "D_alpha(T)=K intersect {x: expanded_min <= Q^T*(x-o) <= expanded_max}; Q=[e_x e_y e_z], o=model origin. K and Q are fixed for a matched support/trim-branch mapping; only the bbox depends on selected faces T.",
+        "degenerate_envelope": "Reject a candidate with zero extent on any local axis within model tolerance; do not silently invent thickness.",
+        "test": "Volume(D_alpha(T) intersect part_solid) <= volume_tolerance; apply a model-unit inward geometric offset to true feature boundaries for numerical robustness, not to artificial bbox caps.",
+        "semantic_cavity_evidence_required": false
+      },
+      "ownership_policy": "Label accepted faces, remove them from their surface nodes, delete empty nodes, rebuild the SAG, and continue with the next candidate.",
+      "feature_space_construction": {
+        "local_crs": "Right-handed orthonormal frame; origin is always model origin (0,0,0). Derive axes once per support/trim-branch match, never per selected face combination. y=normalize(z cross x); project x onto z-perpendicular plane and normalize. A displayed relocated triad is only a direction glyph.",
+        "axis_sign": "Align extrusion axes with the bottom normal when present; otherwise use a deterministic canonical sign (largest absolute component positive, ties x/y/z). Stable perpendicular projects the least-aligned model basis vector onto the z-normal plane.",
+        "implicit_intersection": "K=intersection_i {x:h_i(x)>=0}. Plane: h_i=n_i dot x-d_i with oriented unit topological normal. Cylinder: h_i=sigma_i*(dist(x,axis_i)^2-r_i^2); sigma_i chosen to agree with topological outward normals. These cylinder regions are not linear halfspaces.",
+        "minkowski_extrusion": "In the plane perpendicular to the bottom normal define a filled section C=G (+) disk(r) (+) cone(R), where (+) is Minkowski sum, G is a center point or center segment, and R is empty or one opening ray. K={x: projection(x) in C and n_bottom dot x-d_bottom>=0}. Use filled disks, not just arcs. Empty R means {0}. Centers/radii/bottom and the fixed trim branch come from matched supports, not selected patch extent.",
+        "trim_branch": "For a one-cylinder U section, resolve and store the opening ray once from the oriented radial normal at the reference back-arc midpoint of the matched trim branch. Opposite openings are distinct candidates. This reference is not recomputed when patches are added/removed.",
+        "boundary_display": "Display true boundaries of K clipped to the display box; do not treat box caps as seed supports. Minkowski tangent continuations can create virtual boundary portions not lying on an original cylinder; retain and label them.",
+        "not_recession_cone": "K is a point set retaining support offsets; rec(K) is a direction set and must never replace K in clipping."
+      },
+      "face_active_boundary": {
+        "rule": "For each selected topological face f require a nonempty subset on the active boundary of K, with consistent oriented support. Partial overlap is allowed; whole-face containment is not required.",
+        "sampled_minimum_fraction": 0.1,
+        "sampling": "At least 10 percent of uniformly distributed face-area samples must lie on the active boundary within model tolerance. This is a practical nonempty-overlap threshold, not an exact equivalence to nonemptiness; a finite sample count is not an exact area measure.",
+        "surface_level": "Keep existing surface/group active-boundary tests unchanged, including positive-area support participation."
+      },
+      "trim_policy": {
+        "measure": "Angular Lebesgue measure of the UNION of all selected patches on each specified cylindrical support, projected to its periodic angle circle modulo 2*pi. Merge overlaps and seam splits; do not sum face spans or take the min/max UV range.",
+        "scope": "Evaluate independently per cylinder node, after choosing a face combination. Axial trim does not change angular measure.",
+        "comparisons": "Every specified cylinder role must have positive occupied angular measure and satisfy its upper/lower comparison; strict < is not <=. Use an explicit angular tolerance without turning equality at pi into a valid strict-less case."
+      }
     },
-    "ownership_policy": "Label accepted faces, remove them from their surface nodes, delete empty nodes, rebuild the SAG, and continue with the next candidate."
-  },
   "features": [
     {
       "category_id":1,
       "name":"through_hole",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":false}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"}],
       "edges":[],
       "surface_constraints":{"group_constraints":[]},
       "face_constraints":
-      {"cylindrical_angular_span":
-      {"role":"cylindrical_wall",
-      "operator":">",
-      "radians":3.141592653589793},
-      "recession_volume":
-      {"type":"full_cylinder_axis_bbox_extension",
-      "directions":"both",
-      "extension_ratio":0.1},
-      "all_boundaries_active":true,
-      "maximize_face_set":true,
-      "collision_free":true}},
+      {
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 0,
+            "quantity": "cylindrical_angular_union",
+            "operator": ">",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "stable_perpendicular"
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "cylinder_axis",
+              "node": 0
+            }
+          },
+          "boundary_nodes": [
+            0
+          ]
+        }
+      }},
 
     {
       "category_id":2,
       "name":"triangular_passage",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"},
       {"nodes":[0,2],"code":"00000"},
       {"nodes":[1,2],"code":"00000"}],
       "surface_constraints":
       {"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},
-      "maximize_face_set":true,
-      "collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2
+          ]
+        }
+      }},
 
     {
       "category_id":3,
       "name":"rectangular_passage","space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"},
+      {"id":3,"role":"side_3","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"},
       {"nodes":[0,2],"code":"00110"},
@@ -99,18 +179,51 @@
       {"nodes":[2,3],"code":"00001"}],"surface_constraints":
       {"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
       "face_constraints":
-      {"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      {
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      }},
 
     {
       "category_id":4,
       "name":"6sides_passage","space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
-      {"id":4,"role":"side_4","surface_type":"plane","trimmed":false},
-      {"id":5,"role":"side_5","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"},
+      {"id":3,"role":"side_3","surface_type":"plane"},
+      {"id":4,"role":"side_4","surface_type":"plane"},
+      {"id":5,"role":"side_5","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"},
       {"nodes":[0,2],"code":"00000"},
@@ -127,109 +240,371 @@
       {"nodes":[3,4],"code":"00000"},
       {"nodes":[3,5],"code":"00000"},
       {"nodes":[4,5],"code":"00000"}],"surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3,4,5],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true}]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_extrusion_axis","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ]
+        }
+      }},
 
     {
       "category_id":5,
       "name":"triangular_through_slot","space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"}],"surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_intersection_axis","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "normal_bisector",
+              "nodes": [
+                0,
+                1
+              ]
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1
+          ]
+        }
+      }},
 
     {
       "category_id":6,
       "name":"rectangular_through_slot",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"bottom","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_1","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"bottom","surface_type":"plane"},
+      {"id":2,"role":"side_1","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"},
       {"nodes":[0,2],"code":"00110"},
       {"nodes":[1,2],"code":"00001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"both_slot_axis_and_open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2
+          ]
+        }
+      }},
 
     {
       "category_id":7,
       "name":"circular_through_slot",
-      "space_model":"trimmed_boundary_cell",
+      "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":true}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"}],
       "edges":[],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":"<=","radians":3.141592653589793},"recession_volume":{"type":"full_cylinder_axis_bbox_extension","directions":"both","extension_ratio":0.1},
-      "all_boundaries_active":true,
-      "maximize_face_set":true,
-      "collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 0,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "stable_perpendicular"
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "cylinder_axis",
+              "node": 0
+            }
+          },
+          "boundary_nodes": [
+            0
+          ]
+        }
+      }},
 
     {
       "category_id":8,
       "name":"rectangular_through_step",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"floor","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"wall","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"floor","surface_type":"plane"},
+      {"id":1,"role":"wall","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ]
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1
+          ]
+        }
+      }},
 
     {
       "category_id":9,
       "name":"2sides_through_step",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"wall_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"wall_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"floor","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"wall_0","surface_type":"plane"},
+      {"id":1,"role":"wall_1","surface_type":"plane"},
+      {"id":2,"role":"floor","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"},
       {"nodes":[0,2],"code":"00001"},
       {"nodes":[1,2],"code":"00001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "normal_bisector",
+              "nodes": [
+                0,
+                1
+              ]
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "intersection_axis",
+              "nodes": [
+                0,
+                1
+              ],
+              "align_with_normal": 2
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2
+          ]
+        }
+      }},
 
     {
       "category_id":11,
       "name":"Oring",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"outer_cylindrical_wall","surface_type":"cylinder","trimmed":false},
-      {"id":1,"role":"annular_bottom","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"inner_cylindrical_wall","surface_type":"cylinder","trimmed":false}],
+      [{"id":0,"role":"outer_cylindrical_wall","surface_type":"cylinder"},
+      {"id":1,"role":"annular_bottom","surface_type":"plane"},
+      {"id":2,"role":"inner_cylindrical_wall","surface_type":"cylinder"}],
       "edges":
       [{"nodes":[0,1],"code":"01001"},
       {"nodes":[0,2],"code":"11110"},
       {"nodes":[1,2],"code":"01001"}],
       "surface_constraints":{"group_constraints":[{"type":"radius_order","larger":0,"smaller":2}]},
-      "face_constraints":{"recession_volume":{"type":"annular_cell_bbox_extension","directions":"open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "stable_perpendicular"
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 1
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2
+          ]
+        }
+      }},
 
     {
       "category_id":12,
       "name":"blind_hole",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":false},
-      {"id":1,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"},
+      {"id":1,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":">","radians":3.141592653589793},"recession_volume":{"type":"full_cylinder_axis_bbox_extension","directions":"open_side","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 0,
+            "quantity": "cylindrical_angular_union",
+            "operator": ">",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "stable_perpendicular"
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 1
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1
+          ]
+        }
+      }},
 
     {
       "category_id":13,
       "name":"triangular_pocket",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"},
+      {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"},
       {"nodes":[0,2],"code":"00000"},
@@ -238,18 +613,48 @@
       {"nodes":[1,3],"code":"00001"},
       {"nodes":[2,3],"code":"00001"}],
       "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":3,"side_nodes":[0,1,2]}]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 3
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      }},
 
     {
       "category_id":14,
       "name":"rectangular_pocket",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
-      {"id":4,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"},
+      {"id":3,"role":"side_3","surface_type":"plane"},
+      {"id":4,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"},
       {"nodes":[0,2],"code":"00110"},
@@ -262,20 +667,51 @@
       {"nodes":[2,4],"code":"00001"},
       {"nodes":[3,4],"code":"00001"}],
       "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":4,"side_nodes":[0,1,2,3]}]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 4
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ]
+        }
+      }},
 
     {
       "category_id":15,
       "name":"6sides_pocket",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_2","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"side_3","surface_type":"plane","trimmed":false},
-      {"id":4,"role":"side_4","surface_type":"plane","trimmed":false},
-      {"id":5,"role":"side_5","surface_type":"plane","trimmed":false},
-      {"id":6,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"side_1","surface_type":"plane"},
+      {"id":2,"role":"side_2","surface_type":"plane"},
+      {"id":3,"role":"side_3","surface_type":"plane"},
+      {"id":4,"role":"side_4","surface_type":"plane"},
+      {"id":5,"role":"side_5","surface_type":"plane"},
+      {"id":6,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00000"},
       {"nodes":[0,2],"code":"00000"},
@@ -299,18 +735,51 @@
       {"nodes":[4,6],"code":"00001"},
       {"nodes":[5,6],"code":"00001"}],
       "surface_constraints":{"group_constraints":[{"type":"closed_oriented_prismatic_section","nodes":[0,1,2,3,4,5],"normal_rank":2,"strict_positive_span":true,"bounded_2d_section":true,"all_boundaries_active":true},{"type":"bottom_normal_parallel_group_axis","bottom":6,"side_nodes":[0,1,2,3,4,5]}]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 6
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ]
+        }
+      }},
 
     {
       "category_id":16,
       "name":"circular_end_pocket",
       "space_model":"trimmed_boundary_cell",
       "nodes":
-      [{"id":0,"role":"straight_side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"circular_end_0","surface_type":"cylinder","trimmed":true},
-      {"id":2,"role":"straight_side_1","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"circular_end_1","surface_type":"cylinder","trimmed":true},
-      {"id":4,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"straight_side_0","surface_type":"plane"},
+      {"id":1,"role":"circular_end_0","surface_type":"cylinder"},
+      {"id":2,"role":"straight_side_1","surface_type":"plane"},
+      {"id":3,"role":"circular_end_1","surface_type":"cylinder"},
+      {"id":4,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01110"},
       {"nodes":[0,2],"code":"00110"},
@@ -323,16 +792,73 @@
       {"nodes":[2,4],"code":"00001"},
       {"nodes":[3,4],"code":"01001"}],
       "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2,3],"all_boundaries_active":true}]},
-      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"open_side_opposite_bottom","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 1,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 3.141592653589793
+          },
+          {
+            "node": 3,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "minkowski_extrusion",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 4
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3,
+            4
+          ],
+          "section": {
+            "generator": {
+              "type": "center_segment",
+              "cylinder_nodes": [
+                1,
+                3
+              ]
+            },
+            "disk_radius_from_node": 1,
+            "opening_ray": null,
+            "bottom_node": 4
+          }
+        }
+      }},
 
     {
       "category_id":17,
       "name":"rectangular_blind_slot","space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"back_wall","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"side_1","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"side_0","surface_type":"plane"},
+      {"id":1,"role":"back_wall","surface_type":"plane"},
+      {"id":2,"role":"side_1","surface_type":"plane"},
+      {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"},
       {"nodes":[0,2],"code":"00110"},
@@ -341,17 +867,47 @@
       {"nodes":[1,3],"code":"00001"},
       {"nodes":[2,3],"code":"00001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 1
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 3
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      }},
 
     {
       "category_id":18,
       "name":"v_circular_end_blind_slot",
       "space_model":"trimmed_boundary_cell",
       "nodes":
-      [{"id":0,"role":"straight_side_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"circular_end","surface_type":"cylinder","trimmed":true},
-      {"id":2,"role":"straight_side_1","surface_type":"plane","trimmed":false},
-      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"straight_side_0","surface_type":"plane"},
+      {"id":1,"role":"circular_end","surface_type":"cylinder"},
+      {"id":2,"role":"straight_side_1","surface_type":"plane"},
+      {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01110"},
       {"nodes":[0,2],"code":"00110"},
@@ -360,17 +916,69 @@
       {"nodes":[1,3],"code":"01001"},
       {"nodes":[2,3],"code":"00001"}],
       "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2],"all_boundaries_active":true}]},
-      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 1,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "minkowski_extrusion",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 3
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "section": {
+            "generator": {
+              "type": "center_point",
+              "cylinder_nodes": [
+                1
+              ]
+            },
+            "disk_radius_from_node": 1,
+            "opening_ray": {
+              "type": "fixed_trim_branch_inward_radial",
+              "node": 1
+            },
+            "bottom_node": 3
+          }
+        }
+      }},
 
     {
       "category_id":19,
       "name":"h_circular_end_blind_slot",
       "space_model":"trimmed_boundary_cell",
       "nodes":
-      [{"id":0,"role":"circular_end_0","surface_type":"cylinder","trimmed":true},
-      {"id":1,"role":"straight_side","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"circular_end_1","surface_type":"cylinder","trimmed":true},
-      {"id":3,"role":"bottom","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"circular_end_0","surface_type":"cylinder"},
+      {"id":1,"role":"straight_side","surface_type":"plane"},
+      {"id":2,"role":"circular_end_1","surface_type":"cylinder"},
+      {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01110"},
       {"nodes":[0,2],"code":"11101"},
@@ -379,33 +987,156 @@
       {"nodes":[1,3],"code":"00001"},
       {"nodes":[2,3],"code":"01001"}],
       "surface_constraints":{"group_constraints":[{"type":"trimmed_piecewise_closed_section","boundary_nodes":[0,1,2],"all_boundaries_active":true}]},
-      "face_constraints":{"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 0,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 1.5707963267948966
+          },
+          {
+            "node": 2,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<=",
+            "radians": 1.5707963267948966
+          }
+        ],
+        "feature_space": {
+          "construction": "minkowski_extrusion",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 1
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 3
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2,
+            3
+          ],
+          "section": {
+            "generator": {
+              "type": "center_segment",
+              "cylinder_nodes": [
+                0,
+                2
+              ]
+            },
+            "disk_radius_from_node": 0,
+            "opening_ray": {
+              "type": "plane_normal",
+              "node": 1
+            },
+            "bottom_node": 3
+          }
+        }
+      }},
 
     {
       "category_id":21,
       "name":"circular_blind_step",
-      "space_model":"trimmed_boundary_cell",
+      "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","trimmed":true},
-      {"id":1,"role":"floor","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"},
+      {"id":1,"role":"floor","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"cylindrical_angular_span":{"role":"cylindrical_wall","operator":"<=","radians":3.141592653589793},"recession_volume":{"type":"trimmed_boundary_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}},
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "trim_constraints": [
+          {
+            "node": 0,
+            "quantity": "cylindrical_angular_union",
+            "operator": "<",
+            "radians": 3.141592653589793
+          }
+        ],
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "stable_perpendicular"
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 1
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1
+          ]
+        }
+      }},
 
     {
       "category_id":22,
       "name":"rectangular_blind_step",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"wall_0","surface_type":"plane","trimmed":false},
-      {"id":1,"role":"wall_1","surface_type":"plane","trimmed":false},
-      {"id":2,"role":"floor","surface_type":"plane","trimmed":false}],
+      [{"id":0,"role":"wall_0","surface_type":"plane"},
+      {"id":1,"role":"wall_1","surface_type":"plane"},
+      {"id":2,"role":"floor","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"00001"},
       {"nodes":[0,2],"code":"00001"},
       {"nodes":[1,2],"code":"00001"}],
       "surface_constraints":{"group_constraints":[]},
-      "face_constraints":{"recession_volume":{"type":"oriented_cell_bbox_extension","directions":"all_recession_rays","extension_ratio":0.1},"all_boundaries_active":true,"maximize_face_set":true,"collision_free":true}}
+      "face_constraints":{
+        "maximize_face_set": true,
+        "collision_free": true,
+        "feature_space": {
+          "construction": "implicit_intersection",
+          "local_crs": {
+            "origin": "model_origin",
+            "x": {
+              "type": "plane_normal",
+              "node": 0
+            },
+            "y": {
+              "type": "cross",
+              "operands": [
+                "z",
+                "x"
+              ]
+            },
+            "z": {
+              "type": "plane_normal",
+              "node": 2
+            }
+          },
+          "boundary_nodes": [
+            0,
+            1,
+            2
+          ]
+        }
+      }}
   ]
 }
