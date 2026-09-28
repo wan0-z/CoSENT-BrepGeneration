@@ -63,9 +63,9 @@
         "surface_level": "Keep existing surface/group active-boundary tests unchanged, including positive-area support participation."
       },
       "trim_policy": {
-        "measure": "Angular Lebesgue measure of the UNION of all selected patches on each specified cylindrical support, projected to its periodic angle circle modulo 2*pi. Merge overlaps and seam splits; do not sum face spans or take the min/max UV range.",
-        "scope": "Evaluate independently per cylinder node, after choosing a face combination. Axial trim does not change angular measure.",
-        "comparisons": "Every specified cylinder role must have positive occupied angular measure and satisfy its upper/lower comparison; strict < is not <=. Use an explicit angular tolerance without turning equality at pi into a valid strict-less case."
+        "measure": "Angular length of the shortest connected circular arc containing the angular projections of all selected patches on each specified cylindrical support. Merge overlapping intervals modulo 2*pi, find the largest uncovered circular gap, and compute span = 2*pi - largest_gap. Full-circle coverage gives span = 2*pi; reject empty coverage.",
+        "scope": "Evaluate independently per cylinder node, after choosing a face combination. Project patches onto the periodic angular coordinate; axial position does not affect the covering span.",
+        "comparisons": "Every specified cylinder role must have a positive minimum covering angular span and satisfy its upper/lower comparison; strict < is not <=. Use an explicit angular tolerance without turning equality at pi into a valid strict-less case."
       }
     },
   "features": [
@@ -84,7 +84,7 @@
         "trim_constraints": [
           {
             "node": 0,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": ">",
             "radians": 3.141592653589793
           }
@@ -382,7 +382,7 @@
         "trim_constraints": [
           {
             "node": 0,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 3.141592653589793
           }
@@ -565,7 +565,7 @@
         "trim_constraints": [
           {
             "node": 0,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": ">",
             "radians": 3.141592653589793
           }
@@ -798,13 +798,13 @@
         "trim_constraints": [
           {
             "node": 1,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 3.141592653589793
           },
           {
             "node": 3,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 3.141592653589793
           }
@@ -922,7 +922,7 @@
         "trim_constraints": [
           {
             "node": 1,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 3.141592653589793
           }
@@ -993,13 +993,13 @@
         "trim_constraints": [
           {
             "node": 0,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 1.5707963267948966
           },
           {
             "node": 2,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<=",
             "radians": 1.5707963267948966
           }
@@ -1064,7 +1064,7 @@
         "trim_constraints": [
           {
             "node": 0,
-            "quantity": "cylindrical_angular_union",
+            "quantity": "cylindrical_minimum_covering_arc",
             "operator": "<",
             "radians": 3.141592653589793
           }
