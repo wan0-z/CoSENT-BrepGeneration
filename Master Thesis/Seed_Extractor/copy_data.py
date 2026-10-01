@@ -21,10 +21,10 @@ DATASET_ROOT = (
 )
 
 # Change this value when running the script without command-line arguments.
-SAMPLE_NAME = "20221123_142528_0"
+SAMPLE_NAME = "20221123_142528_10063"
 # ====================================================================
 
-SINGLE_DATA_ROOT = SCRIPT_DIRECTORY / "data" / "single"
+SINGLE_DATA_ROOT = SCRIPT_DIRECTORY / "output_space" / "single"
 STEP_EXTENSIONS = (".step", ".stp")
 
 

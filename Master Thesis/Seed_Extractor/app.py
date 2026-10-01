@@ -346,8 +346,27 @@ def build_face_lookup(cache: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
 # 3D Viewer
 # ============================================================
 
-def build_3d_figure(cache: Dict[str, Any], drag_mode: str, show_recession: bool = False) -> go.Figure:
+@lru_cache(maxsize=1)
+def boundary_marker_sphere():
+    vertices = [(math.sin(math.pi * row / 10) * math.cos(2 * math.pi * col / 16),
+                 math.sin(math.pi * row / 10) * math.sin(2 * math.pi * col / 16),
+                 math.cos(math.pi * row / 10)) for row in range(11) for col in range(16)]
+    triangles = []
+    for row in range(10):
+        for col in range(16):
+            a, b = row * 16 + col, row * 16 + (col + 1) % 16
+            triangles.extend([(a, b, a + 16), (b, b + 16, a + 16)])
+    return vertices, triangles
+
+
+def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) -> go.Figure:
     figure = go.Figure()
+    diagnostics = cache.get("space_diagnostics", {}).get("gt_instances", [])
+    boundary_by_face = {
+        int(check["face_id"]): check
+        for instance in diagnostics
+        for check in (instance.get("active_boundary") or {}).get("faces", [])
+    }
     for face in cache.get("faces", []):
         vertices = face.get("vertices", [])
         triangles = face.get("triangles", [])
@@ -365,6 +384,11 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, show_recession: bool 
             f"<br>Ground-truth instance: {face.get('ground_truth_instance_id')}"
             f"<br>Face seam count: {face.get('seam_edge_count')}"
         )
+        boundary_check = boundary_by_face.get(int(face["face_id"]))
+        if boundary_check is not None:
+            fraction = boundary_check.get("active_fraction")
+            overlap = f"{100. * fraction:.6f}%" if fraction is not None else "N/A"
+            hover += f"<br>Boundary overlap: {overlap}"
         figure.add_trace(
             go.Mesh3d(
                 x=[v[0] for v in vertices],
@@ -374,7 +398,7 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, show_recession: bool 
                 j=[t[1] for t in triangles],
                 k=[t[2] for t in triangles],
                 color=color,
-                opacity=STOCK_OPACITY if category_id == 24 else FEATURE_OPACITY,
+                opacity=1.0 if space_layers else STOCK_OPACITY if category_id == 24 else FEATURE_OPACITY,
                 flatshading=True,
                 text=[hover for _ in vertices],
                 customdata=[int(face["face_id"]) for _ in vertices],
@@ -384,9 +408,10 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, show_recession: bool 
                 showlegend=False,
             )
         )
-    if show_recession:
-        for instance in cache.get("instances", []):
-            collision = instance.get("collision", {})
+    space_layers = space_layers or []
+    if "finite_collision_domain" in space_layers:
+        for instance in diagnostics:
+            collision = instance.get("finite_collision_domain") or {}
             mesh = collision.get("mesh", {})
             vertices, triangles = mesh.get("vertices", []), mesh.get("triangles", [])
             if not vertices or not triangles:
@@ -394,10 +419,45 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, show_recession: bool 
             figure.add_trace(go.Mesh3d(
                 x=[v[0] for v in vertices], y=[v[1] for v in vertices], z=[v[2] for v in vertices],
                 i=[t[0] for t in triangles], j=[t[1] for t in triangles], k=[t[2] for t in triangles],
-                color="#ff0000", opacity=0.22, flatshading=True, showlegend=False,
-                name=f"Recession cone · instance {instance['instance_id']}",
-                hovertemplate=f"Collision volume · {instance.get('category_name')}<br>Instance {instance['instance_id']}<br>{collision.get('method', '')}<extra></extra>",
+                color="#00cc66" if instance["stage"] == "extracted" else "#ff0000" if instance["stage"] == "collision" else "#a0a0a0",
+                opacity=0.22, flatshading=True, showlegend=False,
+                name=f"Finite collision domain · GT {instance['gt_instance_id']}",
+                hovertemplate=f"Finite collision domain · {instance.get('category_name')}<br>GT instance {instance['gt_instance_id']}<br>Stage: {instance['stage']}<br>{collision.get('method', '')}<br>Collision volume: {collision.get('collision_volume', 'not tested')}<extra></extra>",
             ))
+    if space_layers:
+        coordinates = [[], [], []]
+        for edge in cache.get("topological_edges", []):
+            for axis in range(3):
+                coordinates[axis].extend([point[axis] for point in edge["points"]] + [None])
+        if coordinates[0]:
+            figure.add_trace(go.Scatter3d(
+                x=coordinates[0], y=coordinates[1], z=coordinates[2], mode="lines",
+                line=dict(color="#0066ff", width=3), opacity=1., hoverinfo="skip",
+                name="Model topological edges", showlegend=False))
+    if "active_boundary" in space_layers:
+        model_points = [v for face in cache.get("faces", []) for v in face.get("vertices", [])]
+        diagonal = math.sqrt(sum((max(p[a] for p in model_points) - min(p[a] for p in model_points)) ** 2
+                                 for a in range(3))) if model_points else 1.
+        radius = max(diagonal * .004, 1.e-6)
+        unit_vertices, triangles = boundary_marker_sphere()
+        for instance in diagnostics:
+            boundary = instance.get("active_boundary") or {}
+            for face in boundary.get("faces", []):
+                center = face.get("center")
+                if center is None:
+                    continue  # Regenerate old projection caches rather than relabelling their sample counts.
+                vertices = [[center[a] + radius * v[a] for a in range(3)] for v in unit_vertices]
+                passed = face.get("passed")
+                color = ("#a0a0a0" if passed is None else "#39ff14" if instance["stage"] == "extracted"
+                         else "#ffff00" if passed else "#ff2020")
+                figure.add_trace(go.Mesh3d(
+                    x=[v[0] for v in vertices], y=[v[1] for v in vertices], z=[v[2] for v in vertices],
+                    i=[t[0] for t in triangles], j=[t[1] for t in triangles], k=[t[2] for t in triangles],
+                    color=color, opacity=1., flatshading=False, showlegend=False,
+                    customdata=[int(face["face_id"])] * len(vertices),
+                    name=f"Active boundary · GT {instance['gt_instance_id']} · Face {face['face_id']}",
+                    hoverinfo="skip", hovertemplate=None,
+                ))
     figure.update_layout(
         template="plotly_white",
         margin=dict(l=0, r=0, t=10, b=0),
@@ -691,7 +751,7 @@ app.layout = dbc.Container(fluid=True, children=[
                     "right": "12px",
                     "zIndex": 5,
                 }),
-                dcc.Checklist(id="recession-layer", options=[{"label": " Recession cone", "value": "show"}], value=[],
+                dcc.Checklist(id="space-layers", options=[{"label": " Finite collision domain", "value": "finite_collision_domain"}, {"label": " Active boundary", "value": "active_boundary"}], value=[], inline=True,
                               style={"position": "absolute", "top": "12px", "right": "12px", "zIndex": 5, "backgroundColor": "rgba(255,255,255,0.9)", "fontSize": "13px"}),
             ], style={"position": "relative"}),
         ], width=5),
@@ -966,11 +1026,11 @@ def accuracy_summary(cache, extraction_mode, feature_key):
     Output("part-summary", "children"),
     Input("part-selector", "value"),
     Input("drag-mode-store", "data"),
-    Input("recession-layer", "value"),
+    Input("space-layers", "value"),
     Input("feature-selector", "value"),
     Input("extraction-mode-selector", "value"),
 )
-def update_all(cache_path: str, drag_mode: str, recession_layer=None, feature_key=None, extraction_mode="normal"):
+def update_all(cache_path: str, drag_mode: str, space_layers=None, feature_key=None, extraction_mode="normal"):
     if not cache_path:
         empty_figure = go.Figure()
         empty_figure.update_layout(template="plotly_white")
@@ -990,10 +1050,18 @@ def update_all(cache_path: str, drag_mode: str, recession_layer=None, feature_ke
         f"FAG edges: {graph.number_of_edges()}"
     )
     summary = html.Div([html.Div(summary), html.Div(accuracy_summary(cache, extraction_mode, feature_key))])
-    if recession_layer and not any(i.get("collision", {}).get("mesh") for i in cache.get("instances", [])):
-        summary.children.append(html.Div("No cached collision meshes. Re-run the space extractor for this sample.", className="text-muted small"))
+    if space_layers:
+        diagnostics = cache.get("space_diagnostics", {}).get("gt_instances", [])
+        if not diagnostics:
+            summary.children.append(html.Div("No GT diagnostic layers cached. Re-run the single space extractor for this sample.", className="text-muted small"))
+        else:
+            counts = {}
+            for instance in diagnostics:
+                counts[instance["stage"]] = counts.get(instance["stage"], 0) + 1
+            summary.children.append(html.Div("GT diagnostics: " + ", ".join(f"{stage}={count}" for stage, count in counts.items()), className="small"))
+            summary.children.append(html.Div("Domains: green = exact extraction, red = collision rejection, grey = other diagnostic stage. Face-center spheres: green = exact extraction, red = overlap below threshold, yellow = passed face in an unrecovered instance, grey = unavailable. Hover shows area overlap to six decimals. Collision failures are replayed for diagnostics only; missing cells have no fabricated percentage.", className="text-muted small"))
     return (
-        build_3d_figure(cache, drag_mode, bool(recession_layer)),
+        build_3d_figure(cache, drag_mode, space_layers),
         build_fag_figure(cache, graph, positions, "ground_truth"),
         build_fag_figure(cache, graph, positions, "predicted"),
         summary,

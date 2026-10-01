@@ -182,7 +182,8 @@ def planar_spec(name):
         opens = [(False,True),(False,True),(True,True)]
     elif name == "2sides_through_step":
         lo,hi = np.array([-.65,-.5,-.65]),np.array([.65,.65,.65])
-        planes = [plane([1.15,.65,0],[0,-.5,0]),plane([-1.15,.65,0],[0,-.5,0]),plane([0,0,1],lo)]
+        # The feature-space opening between the two walls is 120 degrees.
+        planes = [plane([.5,math.sqrt(3)/2,0],[0,-.5,0]),plane([-.5,math.sqrt(3)/2,0],[0,-.5,0]),plane([0,0,1],lo)]
         opens = [(True,True),(False,True),(False,True)]
     elif name == "rectangular_blind_slot":
         planes = [plane([1,0,0],lo),plane([0,1,0],lo),plane([-1,0,0],hi),plane([0,0,1],lo)]
@@ -258,7 +259,8 @@ def curved_layers(feature):
     else:
         r=.62
         partial=name in {"circular_through_slot","circular_blind_step"}
-        path=arc(0,0,r,0,math.pi if partial else 2*math.pi)
+        angle = math.pi/2 if name == "circular_blind_step" else math.pi if partial else 2*math.pi
+        path=arc(0,0,r,0,angle)
         paths=[path]
         cylinders={0:(0,0,r)}
         contour=arc(0,0,r,0,2*math.pi)

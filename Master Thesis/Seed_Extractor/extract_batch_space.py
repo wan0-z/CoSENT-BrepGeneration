@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -18,7 +19,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import extract_batch as batch_common
 import extract_one_step as legacy
 import extractor_one_step_space as space_core
-from evaluation import calculate_evaluation
 
 
 SCRIPT_DIRECTORY = Path(__file__).resolve().parent
@@ -33,7 +33,7 @@ DATASET_ROOT = (
 )
 
 # Change this value to control how many naturally sorted samples are processed.
-SAMPLE_LIMIT = 200
+SAMPLE_LIMIT = 1500
 
 FEATURE_SEED_JSON_PATH = SCRIPT_DIRECTORY / "data" / "feature_space_seeds.json"
 BATCH_OUTPUT_ROOT = SCRIPT_DIRECTORY / "output_space" / "batch"
@@ -44,6 +44,14 @@ OVERWRITE_EXISTING = False
 
 def write_json(path: Path, payload: Dict[str, Any]) -> None:
     batch_common.write_json(path, payload)
+
+
+def pipeline_signature(seed_path: Path) -> str:
+    digest = hashlib.sha256()
+    for path in (Path(space_core.__file__), Path(legacy.__file__),
+                 SCRIPT_DIRECTORY / "evaluation.py", seed_path):
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
 
 
 def process_one_sample(
@@ -65,9 +73,14 @@ def process_one_sample(
         if not label_path.exists():
             raise FileNotFoundError(f"Missing label JSON: {label_path}")
 
+        signature = pipeline_signature(seed_path)
+        cache = None
         if cache_path.exists() and not overwrite_existing:
             with cache_path.open("r", encoding="utf-8") as file:
                 cache = json.load(file)
+        if (cache is not None and cache.get("space_pipeline_signature") == signature
+                and cache.get("space_diagnostics", {}).get("schema_version") == 2
+                and "topological_edges" in cache):
             return {
                 "sample_name": step_path.stem,
                 "status": "reused",
@@ -81,48 +94,14 @@ def process_one_sample(
             }
 
         with redirect_stdout(captured_output):
-            legacy.STEP_PATH = step_path.resolve()
-            legacy.GROUND_TRUTH_JSON_PATH = label_path.resolve()
-            legacy.FEATURE_SEED_JSON_PATH = seed_path.resolve()
             legacy.PRINT_MATCH_DETAILS = False
-
-            shape = legacy.load_step_shape()
-            ground_truth = legacy.load_ground_truth()
-            features = space_core.load_seeds(seed_path.resolve())
-            fag, faces, fag_statistics = legacy.build_attributed_fag(shape)
-            if fag_statistics["failed_two_face_edge_count"] > 0:
-                raise RuntimeError(
-                    "Attributed FAG contains failed edge attributes; matching was stopped."
-                )
-
-            instances, predicted_seg, predicted_instance_ids, sag = space_core.extract(
-                shape,
-                faces,
-                fag,
-                features,
-            )
-            cache = legacy.build_cache(
-                shape=shape,
-                faces=faces,
-                graph=fag,
-                fag_statistics=fag_statistics,
-                ground_truth=ground_truth,
-                instances=instances,
-                predicted_seg=predicted_seg,
-                predicted_instance_ids=predicted_instance_ids,
-            )
-            cache["extraction_mode"] = "space"
-            cache["surface_attributed_graph"] = sag
-            cache["feature_seed_json_path"] = str(seed_path.resolve())
-            cache["evaluation"] = calculate_evaluation(
-                faces=cache["faces"],
-                instances=instances,
-                category_names=legacy.FACE_CATEGORIES,
-                target_category_ids=[
-                    int(feature["category_id"])
-                    for feature in features
-                ] + [legacy.STOCK_CATEGORY_ID],
-            )
+            cache = space_core.build_space_cache(step_path.resolve(), label_path.resolve(), seed_path.resolve())
+            cache["space_pipeline_signature"] = signature
+            details_root = cache_path.parent.parent / "sample_details" / step_path.stem
+            for filename, key in (("surface_attributed_graph.json", "surface_attributed_graph"),
+                                  ("diagnostic_report.json", "space_diagnostics"),
+                                  ("evaluation.json", "evaluation")):
+                write_json(details_root / filename, cache[key])
             write_json(cache_path, cache)
 
         evaluation = cache["evaluation"]
@@ -132,8 +111,8 @@ def process_one_sample(
             "step_path": str(step_path.resolve()),
             "label_path": str(label_path.resolve()),
             "cache_path": str(cache_path.resolve()),
-            "face_count": len(faces),
-            "predicted_instance_count": len(instances),
+            "face_count": int(cache["face_count"]),
+            "predicted_instance_count": len(cache["instances"]),
             "face_accuracy": evaluation["face_accuracy"],
             "exact_instance_precision": evaluation["exact_instance"]["precision"],
             "exact_instance_recall": evaluation["exact_instance"]["recall"],
