@@ -58,8 +58,8 @@
       },
       "face_active_boundary": {
         "rule": "For each selected topological face f require a nonempty subset on the active boundary of K, with consistent oriented support. Partial overlap is allowed; whole-face containment is not required.",
-        "sampled_minimum_fraction": 0.1,
-        "sampling": "At least 10 percent of uniformly distributed face-area samples must lie on the active boundary within model tolerance. This is a practical nonempty-overlap threshold, not an exact equivalence to nonemptiness; a finite sample count is not an exact area measure.",
+        "sampled_minimum_fraction": 0.5,
+        "sampling": "At least 50 percent of uniformly distributed face-area samples must lie on the active boundary within model tolerance. This is a practical nonempty-overlap threshold, not an exact equivalence to nonemptiness; a finite sample count is not an exact area measure.",
         "surface_level": "Keep existing surface/group active-boundary tests unchanged, including positive-area support participation."
       },
       "trim_policy": {

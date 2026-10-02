@@ -33,7 +33,8 @@ PORT = 8040
 DEBUG = False
 
 INITIAL_DRAG_MODE = "orbit"
-STOCK_OPACITY = 1.0
+STOCK_OPACITY = 0.5
+SPACE_STOCK_OPACITY = 0.5
 FEATURE_OPACITY = 1.0
 ERROR_FACE_COLOR = [1.0, 0.0, 0.0]
 FAG_LAYOUT_SEED = 42
@@ -361,11 +362,15 @@ def boundary_marker_sphere():
 
 def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) -> go.Figure:
     figure = go.Figure()
-    diagnostics = cache.get("space_diagnostics", {}).get("gt_instances", [])
+    gt_feature_faces = {int(face["face_id"]) for face in cache.get("faces", [])
+                        if int(face.get("ground_truth_category_id", 24)) != 24}
+    extracted_instances = [instance for instance in cache.get("instances", [])
+                           if gt_feature_faces.intersection(instance.get("face_ids", []))]
     boundary_by_face = {
         int(check["face_id"]): check
-        for instance in diagnostics
+        for instance in extracted_instances
         for check in (instance.get("active_boundary") or {}).get("faces", [])
+        if int(check["face_id"]) in gt_feature_faces
     }
     for face in cache.get("faces", []):
         vertices = face.get("vertices", [])
@@ -398,7 +403,7 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) ->
                 j=[t[1] for t in triangles],
                 k=[t[2] for t in triangles],
                 color=color,
-                opacity=1.0 if space_layers else STOCK_OPACITY if category_id == 24 else FEATURE_OPACITY,
+                opacity=SPACE_STOCK_OPACITY if space_layers else STOCK_OPACITY if category_id == 24 else FEATURE_OPACITY,
                 flatshading=True,
                 text=[hover for _ in vertices],
                 customdata=[int(face["face_id"]) for _ in vertices],
@@ -410,8 +415,8 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) ->
         )
     space_layers = space_layers or []
     if "finite_collision_domain" in space_layers:
-        for instance in diagnostics:
-            collision = instance.get("finite_collision_domain") or {}
+        for instance in extracted_instances:
+            collision = instance.get("collision") or {}
             mesh = collision.get("mesh", {})
             vertices, triangles = mesh.get("vertices", []), mesh.get("triangles", [])
             if not vertices or not triangles:
@@ -419,10 +424,10 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) ->
             figure.add_trace(go.Mesh3d(
                 x=[v[0] for v in vertices], y=[v[1] for v in vertices], z=[v[2] for v in vertices],
                 i=[t[0] for t in triangles], j=[t[1] for t in triangles], k=[t[2] for t in triangles],
-                color="#00cc66" if instance["stage"] == "extracted" else "#ff0000" if instance["stage"] == "collision" else "#a0a0a0",
+                color="#00cc66",
                 opacity=0.22, flatshading=True, showlegend=False,
-                name=f"Finite collision domain · GT {instance['gt_instance_id']}",
-                hovertemplate=f"Finite collision domain · {instance.get('category_name')}<br>GT instance {instance['gt_instance_id']}<br>Stage: {instance['stage']}<br>{collision.get('method', '')}<br>Collision volume: {collision.get('collision_volume', 'not tested')}<extra></extra>",
+                name=f"Finite collision domain · predicted instance {instance['instance_id']}",
+                hovertemplate=f"Finite collision domain · {instance.get('category_name')}<br>Predicted instance {instance['instance_id']}<br>{collision.get('method', '')}<br>Collision volume: {collision.get('collision_volume', 'not tested')}<extra></extra>",
             ))
     if space_layers:
         coordinates = [[], [], []]
@@ -440,22 +445,23 @@ def build_3d_figure(cache: Dict[str, Any], drag_mode: str, space_layers=None) ->
                                  for a in range(3))) if model_points else 1.
         radius = max(diagonal * .004, 1.e-6)
         unit_vertices, triangles = boundary_marker_sphere()
-        for instance in diagnostics:
+        for instance in extracted_instances:
             boundary = instance.get("active_boundary") or {}
             for face in boundary.get("faces", []):
+                if int(face["face_id"]) not in gt_feature_faces:
+                    continue
                 center = face.get("center")
                 if center is None:
                     continue  # Regenerate old projection caches rather than relabelling their sample counts.
                 vertices = [[center[a] + radius * v[a] for a in range(3)] for v in unit_vertices]
                 passed = face.get("passed")
-                color = ("#a0a0a0" if passed is None else "#39ff14" if instance["stage"] == "extracted"
-                         else "#ffff00" if passed else "#ff2020")
+                color = "#a0a0a0" if passed is None else "#39ff14" if passed else "#ff2020"
                 figure.add_trace(go.Mesh3d(
                     x=[v[0] for v in vertices], y=[v[1] for v in vertices], z=[v[2] for v in vertices],
                     i=[t[0] for t in triangles], j=[t[1] for t in triangles], k=[t[2] for t in triangles],
                     color=color, opacity=1., flatshading=False, showlegend=False,
                     customdata=[int(face["face_id"])] * len(vertices),
-                    name=f"Active boundary · GT {instance['gt_instance_id']} · Face {face['face_id']}",
+                    name=f"Active boundary · predicted instance {instance['instance_id']} · Face {face['face_id']}",
                     hoverinfo="skip", hovertemplate=None,
                 ))
     figure.update_layout(
@@ -1059,7 +1065,7 @@ def update_all(cache_path: str, drag_mode: str, space_layers=None, feature_key=N
             for instance in diagnostics:
                 counts[instance["stage"]] = counts.get(instance["stage"], 0) + 1
             summary.children.append(html.Div("GT diagnostics: " + ", ".join(f"{stage}={count}" for stage, count in counts.items()), className="small"))
-            summary.children.append(html.Div("Domains: green = exact extraction, red = collision rejection, grey = other diagnostic stage. Face-center spheres: green = exact extraction, red = overlap below threshold, yellow = passed face in an unrecovered instance, grey = unavailable. Hover shows area overlap to six decimals. Collision failures are replayed for diagnostics only; missing cells have no fabricated percentage.", className="text-muted small"))
+            summary.children.append(html.Div("Domains and face-center spheres use the actual predicted instance assigned to each GT feature face. A GT feature face predicted as stock has no domain or active-boundary marker. Hover shows area overlap to six decimals.", className="text-muted small"))
     return (
         build_3d_figure(cache, drag_mode, space_layers),
         build_fag_figure(cache, graph, positions, "ground_truth"),

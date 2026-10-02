@@ -23,7 +23,7 @@ from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeCylinder
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeBox
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakePrism
 from OCC.Core.BRepPrimAPI import BRepPrimAPI_MakeHalfSpace
-from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_Transform
+from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy, BRepBuilderAPI_MakeFace, BRepBuilderAPI_MakePolygon, BRepBuilderAPI_Transform
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
 from OCC.Core.gp import gp_Ax2, gp_Dir, gp_Pln, gp_Pnt, gp_Trsf, gp_Vec
@@ -31,10 +31,17 @@ from OCC.Core.TopAbs import TopAbs_REVERSED, TopAbs_EDGE
 
 import extract_one_step as legacy
 from evaluation import calculate_evaluation
+from copy_data import copy_sample
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_SAMPLE = "20221123_142528_10063"
+DEFAULT_SAMPLE = "20221123_142528_1059"
+DATASET_ROOT = (
+    ROOT.parent
+    / "MF_Explorer"
+    / "data"
+    / "mfinstseg"
+)
 INPUT_ROOT = ROOT / "output_space" / "single"
 OUTPUT_ROOT = ROOT / "output_space" / "single"
 SEED_PATH = ROOT / "data" / "feature_space_seeds.json"
@@ -44,7 +51,7 @@ RADIUS_TOLERANCE = 1.0e-5
 VOLUME_RELATIVE_TOLERANCE = 1.0e-9
 VOLUME_MINIMUM_TOLERANCE = 1.0e-8
 MAX_MATCHES_PER_FEATURE = 5000
-ACTIVE_PATCH_SAMPLE_FRACTION = 0.10
+ACTIVE_PATCH_SAMPLE_FRACTION = 0.5
 
 
 def normalized(values: Sequence[float]) -> np.ndarray:
@@ -339,8 +346,16 @@ def shape_volume(shape: Optional[Any]) -> float:
     return max(0.0, float(properties.Mass()))
 
 
+def copy_shape(shape: Any) -> Any:
+    copied = BRepBuilderAPI_Copy(shape, True, False).Shape()
+    if copied.IsNull():
+        raise RuntimeError("OpenCascade shape copy failed")
+    return copied
+
+
 def boolean_shape(operation_type: Any, first: Any, second: Any) -> Any:
     operation = operation_type(first, second)
+    operation.SetNonDestructive(True)
     operation.Build()
     if not operation.IsDone() or operation.Shape().IsNull():
         raise RuntimeError("OpenCascade Boolean operation failed")
@@ -354,8 +369,10 @@ def common(first: Any, second: Any) -> Any:
 def prepare_face_geometry(part_shape: Any, faces: Sequence[Any], fag: nx.MultiGraph) -> None:
     if "_space_faces" in fag.graph:
         return
+    pristine_part_shape = copy_shape(part_shape)
     fag.graph["_space_faces"] = faces
-    fag.graph["_space_part_volume"] = shape_volume(part_shape)
+    fag.graph["_space_pristine_part_shape"] = pristine_part_shape
+    fag.graph["_space_part_volume"] = shape_volume(pristine_part_shape)
     meshes = legacy.triangulate_faces(part_shape, faces)
     fag.graph["_space_meshes"] = meshes
     all_vertices = np.array([point for mesh in meshes for point in mesh["vertices"]])
@@ -612,13 +629,19 @@ def collision_free(part_shape: Any, fag: nx.MultiGraph, surface_graph: nx.Graph,
         low, high = local_face_bounds(fag, face_ids, context["frame"])
         epsilon = max(LENGTH_TOLERANCE, float(np.linalg.norm(high - low)) * 1.0e-6)
         cell, record = finite_collision_domain(fag, surface_graph, feature, mapping, face_ids, context, epsilon)
-        if shape_volume(cell) <= VOLUME_MINIMUM_TOLERANCE:
+        cell_volume = shape_volume(cell)
+        if cell_volume <= VOLUME_MINIMUM_TOLERANCE:
             return False, {"status": "empty_feature_cell", **record}
-        collision_volume = shape_volume(common(cell, part_shape))
+        collision_part_shape = copy_shape(fag.graph["_space_pristine_part_shape"])
+        common_collision_volume = shape_volume(common(copy_shape(cell), collision_part_shape))
+        remaining_cell = boolean_shape(BRepAlgoAPI_Cut, copy_shape(cell), copy_shape(fag.graph["_space_pristine_part_shape"]))
+        difference_collision_volume = min(cell_volume, max(0.0, cell_volume - shape_volume(remaining_cell)))
+        collision_volume = max(common_collision_volume, difference_collision_volume)
         part_volume = fag.graph["_space_part_volume"]
         tolerance = max(VOLUME_MINIMUM_TOLERANCE, part_volume * VOLUME_RELATIVE_TOLERANCE)
         record.update(status="collision_free" if collision_volume <= tolerance else "collision_detected",
-                      collision_volume=collision_volume, volume_tolerance=tolerance)
+                      collision_volume=collision_volume, common_collision_volume=common_collision_volume,
+                      difference_collision_volume=difference_collision_volume, volume_tolerance=tolerance)
         if capture_mesh:
             # Display the geometric domain, not the numerically eroded solid.
             exact, _ = finite_collision_domain(fag, surface_graph, feature, mapping, face_ids, context)
@@ -682,7 +705,8 @@ def angular_constraint_satisfied(feature: Dict[str, Any], surface_graph: nx.Grap
 
 
 def surface_intersection(first: Any, second: Any, tolerance: float) -> Any:
-    operation = BRepAlgoAPI_Common(first, second)
+    operation = BRepAlgoAPI_Common(copy_shape(first), copy_shape(second))
+    operation.SetNonDestructive(True)
     operation.SetFuzzyValue(tolerance)
     operation.Build()
     if not operation.IsDone() or operation.Shape().IsNull():
@@ -1176,6 +1200,18 @@ def main() -> None:
     step_path = (args.step or INPUT_ROOT / sample / f"{sample}.step").resolve()
     label_path = (args.label or INPUT_ROOT / sample / f"{sample}.json").resolve()
     output = (args.output or OUTPUT_ROOT / sample).resolve()
+    if args.step is None and args.label is None and (not step_path.exists() or not label_path.exists()):
+        input_directory = (INPUT_ROOT / sample).resolve()
+        if input_directory.exists():
+            if any(input_directory.iterdir()):
+                raise FileNotFoundError(f"Sample folder exists but is missing its STEP or label file: {input_directory}")
+            input_directory.rmdir()
+        destination = copy_sample(
+            dataset_root=DATASET_ROOT,
+            sample_name=sample,
+            destination_root=INPUT_ROOT,
+        )
+        print(f"Sample copied to: {destination}")
     output.mkdir(parents=True, exist_ok=True)
     cache = build_space_cache(step_path, label_path, args.seeds)
     sag = cache["surface_attributed_graph"]

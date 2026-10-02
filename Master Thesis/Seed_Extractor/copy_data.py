@@ -24,7 +24,7 @@ DATASET_ROOT = (
 SAMPLE_NAME = "20221123_142528_10063"
 # ====================================================================
 
-SINGLE_DATA_ROOT = SCRIPT_DIRECTORY / "output_space" / "single"
+SINGLE_DATA_ROOT = SCRIPT_DIRECTORY / "output" / "single"
 STEP_EXTENSIONS = (".step", ".stp")
 
 
@@ -78,7 +78,7 @@ def copy_sample(
             f"{destination_directory}"
         )
 
-    destination_directory.mkdir(parents=True, exist_ok=False)
+    destination_directory.mkdir(parents=True, exist_ok=True)
 
     try:
         shutil.copy2(step_path, destination_step)
