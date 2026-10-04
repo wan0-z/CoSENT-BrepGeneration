@@ -9,9 +9,42 @@ import extract_batch_space as batch
 
 
 class BatchSpacePipelineTests(unittest.TestCase):
+    def test_partition_reuses_only_current_valid_outputs(self):
+        signature = batch.pipeline_signature(batch.FEATURE_SEED_JSON_PATH)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache_root = root / "web_cache"
+            sample_pairs = []
+            for name in ("sample_1", "sample_2", "sample_3"):
+                label = root / f"{name}.json"
+                batch.write_json(label, {})
+                sample_pairs.append((root / f"{name}.step", label))
+
+            valid_cache = {
+                "space_pipeline_signature": signature,
+                "space_diagnostics": {"schema_version": 3},
+                "topological_edges": [],
+                "evaluation": {"confusion_matrix": {}},
+                "face_count": 1,
+                "feature_instance_count": 0,
+            }
+            batch.write_json(cache_root / "sample_1.json", valid_cache)
+            stale_cache = dict(valid_cache, space_pipeline_signature="stale")
+            batch.write_json(cache_root / "sample_2.json", stale_cache)
+
+            reused, pending = batch.partition_samples(
+                sample_pairs,
+                cache_root,
+                signature,
+            )
+
+            self.assertEqual([result["sample_name"] for result in reused], ["sample_1"])
+            self.assertEqual([step.stem for step, _ in pending], ["sample_2", "sample_3"])
+
     def test_shared_pipeline_and_cache_version(self):
         source = Path(__file__).parent / "output_space/single/20221123_142528_10/cache.json"
         reference = json.loads(source.read_text())
+        reference["space_diagnostics"]["schema_version"] = 3
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             label = root / "sample.json"

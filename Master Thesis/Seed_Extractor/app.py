@@ -16,6 +16,12 @@ import networkx as nx
 import plotly.graph_objects as go
 from dash import Dash, Input, Output, State, dcc, html
 
+from evaluation import (
+    annotate_invalid_label_faces,
+    find_invalid_ground_truth_instances,
+    seed_surface_node_counts_from_features,
+)
+
 
 # ============================================================
 # 手动配置
@@ -31,6 +37,10 @@ SPACE_BATCH_SUMMARY_PATH = SCRIPT_DIRECTORY / "output_space" / "batch" / "summar
 HOST = "127.0.0.1"
 PORT = 8040
 DEBUG = False
+FEATURE_SEED_JSON_PATH = SCRIPT_DIRECTORY / "data" / "feature_seeds.json"
+SPACE_FEATURE_SEED_JSON_PATH = (
+    SCRIPT_DIRECTORY / "data" / "feature_space_seeds.json"
+)
 
 INITIAL_DRAG_MODE = "orbit"
 STOCK_OPACITY = 0.5
@@ -102,7 +112,41 @@ def list_cache_files(mode: str, extraction_mode: str = "normal") -> List[Path]:
 
 def load_cache(path: Path) -> Dict[str, Any]:
     with path.open("r", encoding="utf-8") as file:
-        return json.load(file)
+        cache = json.load(file)
+    seed_path = Path(cache.get("feature_seed_json_path", ""))
+    if not seed_path.is_file():
+        seed_path = (
+            SPACE_FEATURE_SEED_JSON_PATH
+            if cache.get("extraction_mode") == "space"
+            else FEATURE_SEED_JSON_PATH
+        )
+    with seed_path.open("r", encoding="utf-8") as file:
+        seed_payload = json.load(file)
+    features = seed_payload.get("features", seed_payload)
+    collision_diagnostics = cache.get(
+        "invalid_label_collision_diagnostics", []
+    ) or cache.get("space_diagnostics", {}).get("gt_instances", [])
+    if not collision_diagnostics:
+        companion = None
+        if BATCH_CACHE_ROOT in path.parents:
+            companion = SPACE_BATCH_CACHE_ROOT / path.name
+        elif SINGLE_CACHE_ROOT in path.parents:
+            companion = SPACE_SINGLE_CACHE_ROOT / path.parent.name / "cache.json"
+        if companion is not None and companion.is_file():
+            with companion.open("r", encoding="utf-8") as file:
+                companion_cache = json.load(file)
+            collision_diagnostics = companion_cache.get(
+                "space_diagnostics", {}
+            ).get("gt_instances", [])
+    invalid_instances = find_invalid_ground_truth_instances(
+        cache.get("faces", []),
+        seed_surface_node_counts_from_features(features),
+        cache.get("category_names", []),
+        collision_diagnostics,
+    )
+    annotate_invalid_label_faces(cache.get("faces", []), invalid_instances)
+    cache["invalid_label_instances"] = invalid_instances
+    return cache
 
 
 def cache_options(mode: str, extraction_mode: str = "normal") -> List[Dict[str, str]]:
@@ -122,6 +166,7 @@ OUTCOME_OPTIONS = [
     {"label": "False negative", "value": "false_negative"},
     {"label": "False positive", "value": "false_positive"},
     {"label": "Mixed class", "value": "mixed_class"},
+    {"label": "Invalid label", "value": "invalid_label"},
 ]
 FEATURE_CATEGORY_IDS = [
     1, 2, 3, 4, 5, 6, 7, 8, 9, 11,
@@ -186,6 +231,13 @@ def mixed_class_label(feature_key: str) -> str:
 def face_filter_pair(face: Dict[str, Any]) -> Optional[Tuple[str, str]]:
     ground_truth_id = int(face.get("ground_truth_category_id", 24))
     predicted_id = int(face.get("predicted_category_id", 24))
+
+    if face.get("invalid_label"):
+        if ground_truth_id == 10:
+            return "invalid_label", SPECIAL_SLANTED_KEY
+        if ground_truth_id == 20:
+            return "invalid_label", SPECIAL_TRIANGULAR_BLIND_KEY
+        return "invalid_label", str(ground_truth_id)
 
     # Chamfer and round/fillet are excluded extraction targets, so their
     # expected extractor output is stock. Predicting a feature is an error.

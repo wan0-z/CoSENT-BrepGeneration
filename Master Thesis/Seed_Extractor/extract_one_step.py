@@ -72,7 +72,12 @@ from OCC.Core.TopLoc import TopLoc_Location
 from OCC.Core.TopoDS import topods
 from OCC.Core.GProp import GProp_GProps
 
-from evaluation import calculate_evaluation
+from evaluation import (
+    annotate_invalid_label_faces,
+    calculate_evaluation,
+    find_invalid_ground_truth_instances,
+    seed_surface_node_counts_from_features,
+)
 
 
 # ============================================================
@@ -4496,6 +4501,15 @@ def build_cache(
             }
         )
 
+    features = load_feature_seeds()
+    seed_surface_node_counts = seed_surface_node_counts_from_features(features)
+    invalid_instances = find_invalid_ground_truth_instances(
+        face_records,
+        seed_surface_node_counts,
+        FACE_CATEGORIES,
+    )
+    annotate_invalid_label_faces(face_records, invalid_instances)
+
     cache = {
         "step_path": str(
             STEP_PATH.resolve()
@@ -4526,6 +4540,7 @@ def build_cache(
             str(category_id): color
             for category_id, color in CATEGORY_TO_COLOR.items()
         },
+        "invalid_label_instances": invalid_instances,
     }
 
     cache["evaluation"] = calculate_evaluation(
@@ -4534,8 +4549,10 @@ def build_cache(
         category_names=FACE_CATEGORIES,
         target_category_ids=[
             int(feature["category_id"])
-            for feature in load_feature_seeds()
+            for feature in features
         ] + [STOCK_CATEGORY_ID],
+        seed_surface_node_counts=seed_surface_node_counts,
+        invalid_instances=invalid_instances,
     )
 
     return cache

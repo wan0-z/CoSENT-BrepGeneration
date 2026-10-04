@@ -14,6 +14,7 @@ import numpy as np
 from scipy.optimize import linprog
 
 from OCC.Core.BRepAdaptor import BRepAdaptor_Surface, BRepAdaptor_Curve
+from OCC.Core.BRepClass3d import BRepClass3d_SolidClassifier
 from OCC.Core.GCPnts import GCPnts_QuasiUniformDeflection
 from OCC.Core.Bnd import Bnd_Box
 from OCC.Core.BRepBndLib import brepbndlib
@@ -27,15 +28,20 @@ from OCC.Core.BRepBuilderAPI import BRepBuilderAPI_Copy, BRepBuilderAPI_MakeFace
 from OCC.Core.GProp import GProp_GProps
 from OCC.Core.GeomAbs import GeomAbs_Cylinder, GeomAbs_Plane
 from OCC.Core.gp import gp_Ax2, gp_Dir, gp_Pln, gp_Pnt, gp_Trsf, gp_Vec
-from OCC.Core.TopAbs import TopAbs_REVERSED, TopAbs_EDGE
+from OCC.Core.TopAbs import TopAbs_IN, TopAbs_ON, TopAbs_REVERSED, TopAbs_EDGE
 
 import extract_one_step as legacy
-from evaluation import calculate_evaluation
+from evaluation import (
+    annotate_invalid_label_faces,
+    calculate_evaluation,
+    find_invalid_ground_truth_instances,
+    seed_surface_node_counts_from_features,
+)
 from copy_data import copy_sample
 
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_SAMPLE = "20221123_142528_1059"
+DEFAULT_SAMPLE = "20221123_142528_1016"
 DATASET_ROOT = (
     ROOT.parent
     / "MF_Explorer"
@@ -51,7 +57,7 @@ RADIUS_TOLERANCE = 1.0e-5
 VOLUME_RELATIVE_TOLERANCE = 1.0e-9
 VOLUME_MINIMUM_TOLERANCE = 1.0e-8
 MAX_MATCHES_PER_FEATURE = 5000
-ACTIVE_PATCH_SAMPLE_FRACTION = 0.5
+ACTIVE_PATCH_SAMPLE_FRACTION = 0.9
 
 
 def normalized(values: Sequence[float]) -> np.ndarray:
@@ -164,6 +170,7 @@ def build_oriented_surface_graph(faces: Sequence[Any], available_faces: Set[int]
             groups[key]["face_angular_intervals"][str(face_id)] = geometry["angular_interval"]
 
     graph = nx.Graph()
+    graph.graph["available_face_ids"] = sorted(available_faces)
     for surface_id, attributes in enumerate(groups.values()):
         if attributes["surface_type"] == "cylinder":
             attributes["angular_span"] = minimum_covering_arc(list(attributes["face_angular_intervals"].values()))
@@ -224,44 +231,93 @@ def candidate_nodes(graph: nx.Graph, seed_node: Dict[str, Any]) -> List[int]:
     return result
 
 
-def find_seed_matches(graph: nx.Graph, feature: Dict[str, Any]) -> List[Dict[int, int]]:
+def find_seed_matches(graph: nx.Graph, feature: Dict[str, Any], fag: nx.MultiGraph) -> List[Dict[int, int]]:
     seed_nodes = {int(node["id"]): node for node in feature["nodes"]}
     seed_edges = {frozenset(int(value) for value in edge["nodes"]): edge["code"] for edge in feature.get("edges", [])}
     candidates = {node_id: candidate_nodes(graph, node) for node_id, node in seed_nodes.items()}
-    order = sorted(seed_nodes, key=lambda node_id: len(candidates[node_id]))
-    matches: List[Dict[int, int]] = []
-    mapping: Dict[int, int] = {}
-    used: Set[int] = set()
+    seed_degree = {node_id: sum(node_id in edge for edge in seed_edges) for node_id in seed_nodes}
+    order = sorted(seed_nodes, key=lambda node_id: (len(candidates[node_id]), -seed_degree[node_id], node_id))
 
-    def visit(index: int) -> None:
-        if len(matches) >= MAX_MATCHES_PER_FEATURE:
-            return
-        if index == len(order):
-            if surface_constraints_satisfied(graph, feature, mapping):
-                matches.append(dict(mapping))
-            return
-        seed_id = order[index]
-        for model_id in candidates[seed_id]:
-            if model_id in used:
-                continue
-            if any(graph.nodes[model_id]["support_string"] == graph.nodes[other]["support_string"] for other in used):
-                continue
-            valid = True
-            for mapped_seed, mapped_model in mapping.items():
-                required = seed_edges.get(frozenset((seed_id, mapped_seed)))
-                if required is None:
+    available_faces = set(graph.graph.get("available_face_ids", fag.nodes))
+    face_graph = nx.Graph()
+    face_graph.add_nodes_from(available_faces)
+    face_graph.add_edges_from(
+        (int(first), int(second))
+        for first, second in fag.edges()
+        if first in available_faces and second in available_faces and first != second
+    )
+    face_distances = dict(nx.all_pairs_shortest_path_length(face_graph))
+    unreachable_distance = len(available_faces) + 1
+    meshes = fag.graph.get("_space_meshes", [])
+    node_bounds: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+    for node_id, attributes in graph.nodes(data=True):
+        points = [point for face_id in attributes["face_ids"]
+                  if face_id < len(meshes) for point in meshes[face_id]["vertices"]]
+        if points:
+            values = np.asarray(points, dtype=float)
+            node_bounds[int(node_id)] = (values.min(axis=0), values.max(axis=0))
+
+    support_distances: Dict[Tuple[int, int], int] = {}
+    for first, second in itertools.combinations(graph.nodes, 2):
+        distances = [face_distances.get(int(first_face), {}).get(int(second_face))
+                     for first_face in graph.nodes[first]["face_ids"]
+                     for second_face in graph.nodes[second]["face_ids"]]
+        finite = [int(distance) for distance in distances if distance is not None]
+        support_distances[(min(first, second), max(first, second))] = min(finite) if finite else unreachable_distance
+
+    def locality_key(mapping: Dict[int, int]) -> Tuple[Any, ...]:
+        model_nodes = sorted(set(mapping.values()))
+        if len(model_nodes) <= 1:
+            return 0, 0, 0.0, tuple(mapping.get(seed_id, -1) for seed_id in order)
+        locality_graph = nx.Graph()
+        locality_graph.add_nodes_from(model_nodes)
+        for first, second in itertools.combinations(model_nodes, 2):
+            locality_graph.add_edge(first, second,
+                weight=support_distances[(min(first, second), max(first, second))])
+        tree = nx.minimum_spanning_tree(locality_graph, weight="weight")
+        tree_distances = [int(attributes["weight"]) for _, _, attributes in tree.edges(data=True)]
+        unreachable_count = sum(distance >= unreachable_distance for distance in tree_distances)
+        topology_span = sum(tree_distances)
+        bounds = [node_bounds[node_id] for node_id in model_nodes if node_id in node_bounds]
+        if bounds:
+            low = np.min(np.asarray([bound[0] for bound in bounds]), axis=0)
+            high = np.max(np.asarray([bound[1] for bound in bounds]), axis=0)
+            spatial_diagonal = float(np.linalg.norm(high - low))
+        else:
+            spatial_diagonal = float("inf")
+        return unreachable_count, topology_span, spatial_diagonal, tuple(mapping.get(seed_id, -1) for seed_id in order)
+
+    states: List[Tuple[Dict[int, int], Set[int]]] = [({}, set())]
+    for seed_id in order:
+        expanded: List[Tuple[Dict[int, int], Set[int]]] = []
+        for mapping, used in states:
+            for model_id in candidates[seed_id]:
+                if model_id in used:
                     continue
-                if not graph.has_edge(model_id, mapped_model) or graph.edges[model_id, mapped_model]["code"] != required:
-                    valid = False
-                    break
-            if not valid:
-                continue
-            mapping[seed_id] = model_id
-            used.add(model_id)
-            visit(index + 1)
-            used.remove(model_id)
-            del mapping[seed_id]
-    visit(0)
+                if any(graph.nodes[model_id]["support_string"] == graph.nodes[other]["support_string"] for other in used):
+                    continue
+                valid = True
+                for mapped_seed, mapped_model in mapping.items():
+                    required = seed_edges.get(frozenset((seed_id, mapped_seed)))
+                    if required is None:
+                        continue
+                    if not graph.has_edge(model_id, mapped_model) or graph.edges[model_id, mapped_model]["code"] != required:
+                        valid = False
+                        break
+                if not valid:
+                    continue
+                next_mapping = dict(mapping)
+                next_mapping[seed_id] = model_id
+                if (len(next_mapping) == len(order)
+                        and not surface_constraints_satisfied(graph, feature, next_mapping)):
+                    continue
+                expanded.append((next_mapping, used | {model_id}))
+        expanded.sort(key=lambda state: locality_key(state[0]))
+        states = expanded[:MAX_MATCHES_PER_FEATURE]
+        if not states:
+            break
+
+    matches = [mapping for mapping, _ in states if len(mapping) == len(order)]
     unique, seen = [], set()
     for mapping in matches:
         key = tuple(sorted(mapping.values()))
@@ -623,6 +679,56 @@ def collision_mesh(cell: Any) -> Dict[str, Any]:
     return {'vertices': vertices, 'triangles': triangles}
 
 
+def collision_modifier_face_contacts(
+    collision_cell: Any,
+    fag: nx.MultiGraph,
+    ground_truth: Dict[str, Any],
+    instance_face_ids: Set[int],
+) -> List[Dict[str, Any]]:
+    """Find connected chamfer/round faces with sampled points in the cell.
+
+    Every tested point lies on the boundary of the original part.  Therefore a
+    point classified inside/on the collision cell also belongs to the closure
+    of ``collision_cell intersect part`` used by the collision-volume test.
+    """
+    tolerance = max(
+        LENGTH_TOLERANCE,
+        float(fag.graph.get("_space_length_scale", 1.0)) * 1.0e-7,
+    )
+    classifier = BRepClass3d_SolidClassifier(collision_cell)
+    contacts: List[Dict[str, Any]] = []
+    for face_id, raw_category_id in ground_truth["seg"].items():
+        face_id = int(face_id)
+        raw_category_id = int(raw_category_id)
+        if raw_category_id not in {0, 23} or face_id not in fag:
+            continue
+        connected_instance_face_ids = sorted(
+            set(int(neighbor) for neighbor in fag.neighbors(face_id))
+            .intersection(instance_face_ids)
+        )
+        if not connected_instance_face_ids:
+            continue
+        samples = fag.nodes[face_id].get("_space_area_samples", [])
+        hit_points = []
+        for coordinates in samples:
+            classifier.Perform(gp_Pnt(*coordinates), tolerance)
+            if classifier.State() in {TopAbs_IN, TopAbs_ON}:
+                hit_points.append([float(value) for value in coordinates])
+        if hit_points:
+            contacts.append(
+                {
+                    "face_id": face_id,
+                    "category_id": raw_category_id,
+                    "connected_instance_face_ids": connected_instance_face_ids,
+                    "sample_count": len(samples),
+                    "collision_point_count": len(hit_points),
+                    "collision_points": hit_points[:8],
+                    "point_tolerance": tolerance,
+                }
+            )
+    return contacts
+
+
 def collision_free(part_shape: Any, fag: nx.MultiGraph, surface_graph: nx.Graph, feature: Dict[str, Any], mapping: Dict[int, int], face_ids: Set[int], capture_mesh: bool = False, context: Optional[Dict[str, Any]] = None) -> Tuple[bool, Dict[str, Any]]:
     context = context or feature_space_contexts(surface_graph, feature, mapping)[0]
     try:
@@ -759,7 +865,7 @@ def boundary_orientation_matches(surface: Dict[str, Any], boundary_face: Any) ->
 
 def active_boundary_record(fag: nx.MultiGraph, surface_graph: nx.Graph, feature: Dict[str, Any], mapping: Dict[int, int], role_faces: Dict[int, Set[int]], context: Dict[str, Any]) -> Dict[str, Any]:
     policy = feature.get("_matching_policy", {}).get("face_active_boundary", {})
-    threshold = float(policy.get("minimum_area_fraction", policy.get("sampled_minimum_fraction", ACTIVE_PATCH_SAMPLE_FRACTION)))
+    threshold = float(policy.get("sampled_minimum_fraction", ACTIVE_PATCH_SAMPLE_FRACTION))
     face_ids = set().union(*role_faces.values())
     tolerance = max(LENGTH_TOLERANCE, fag.graph["_space_length_scale"] * 1.0e-7)
     low, high = local_face_bounds(fag, face_ids, context["frame"])
@@ -935,7 +1041,7 @@ def extract(part_shape: Any, faces: Sequence[Any], fag: nx.MultiGraph, features:
             surface_graph = build_oriented_surface_graph(faces, available)
             if not snapshots:
                 snapshots.append(serialize_sag(surface_graph))
-            surface_matches = find_seed_matches(surface_graph, feature)
+            surface_matches = find_seed_matches(surface_graph, feature, fag)
             matches = []
             for mapping in surface_matches:
                 try:
@@ -1116,6 +1222,27 @@ def diagnose_ground_truth(part_shape: Any, faces: Sequence[Any], fag: nx.MultiGr
                 if report.get("collision"):
                     record.update({key: value for key, value in report["collision"].items() if key not in ("mesh", "epsilon")})
                 report["finite_collision_domain"] = record
+                if (report.get("collision") or {}).get("status") == "collision_detected":
+                    collision_epsilon = float(
+                        report["collision"].get("epsilon", 0.0)
+                    )
+                    collision_cell, _ = finite_collision_domain(
+                        fag,
+                        graph,
+                        feature,
+                        mapping,
+                        ids,
+                        context,
+                        epsilon=collision_epsilon,
+                    )
+                    report["collision_modifier_face_contacts"] = (
+                        collision_modifier_face_contacts(
+                            collision_cell,
+                            fag,
+                            ground_truth,
+                            ids,
+                        )
+                    )
                 report["domain_available"] = True
             except (RuntimeError, ValueError) as error:
                 report.update(domain_available=False, domain_unavailable_reason=str(error))
@@ -1189,8 +1316,26 @@ def build_space_cache(step_path: Path, label_path: Path, seed_path: Path) -> Dic
     cache["surface_attributed_graph"] = sag
     cache["feature_seed_json_path"] = str(seed_path.resolve())
     cache["topological_edges"] = topological_edge_mesh(shape, fag.graph["_space_length_scale"])
-    cache["space_diagnostics"] = {"schema_version": 2, "ground_truth_used_for_recognition": False, "gt_instances": diagnostics}
-    cache["evaluation"] = calculate_evaluation(faces=cache["faces"], instances=instances, category_names=legacy.FACE_CATEGORIES, target_category_ids=[int(feature["category_id"]) for feature in features] + [legacy.STOCK_CATEGORY_ID])
+    cache["space_diagnostics"] = {"schema_version": 3, "ground_truth_used_for_recognition": False, "gt_instances": diagnostics}
+    seed_surface_node_counts = seed_surface_node_counts_from_features(features)
+    invalid_instances = find_invalid_ground_truth_instances(
+        cache["faces"],
+        seed_surface_node_counts,
+        legacy.FACE_CATEGORIES,
+        diagnostics,
+    )
+    annotate_invalid_label_faces(cache["faces"], invalid_instances)
+    cache["invalid_label_instances"] = invalid_instances
+    cache["evaluation"] = calculate_evaluation(
+        faces=cache["faces"],
+        instances=instances,
+        category_names=legacy.FACE_CATEGORIES,
+        target_category_ids=[int(feature["category_id"]) for feature in features]
+        + [legacy.STOCK_CATEGORY_ID],
+        seed_surface_node_counts=seed_surface_node_counts,
+        invalid_instances=invalid_instances,
+        collision_diagnostics=diagnostics,
+    )
     return cache
 
 

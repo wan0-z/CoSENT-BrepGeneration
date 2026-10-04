@@ -33,12 +33,12 @@ DATASET_ROOT = (
 )
 
 # Change this value to control how many naturally sorted samples are processed.
-SAMPLE_LIMIT = 1500
+SAMPLE_LIMIT = 200
 
 FEATURE_SEED_JSON_PATH = SCRIPT_DIRECTORY / "data" / "feature_space_seeds.json"
 BATCH_OUTPUT_ROOT = SCRIPT_DIRECTORY / "output_space" / "batch"
 WORKER_COUNT = min(4, max(1, os.cpu_count() or 1))
-OVERWRITE_EXISTING = False
+REDO_CURRENT = True
 # ====================================================================
 
 
@@ -52,6 +52,67 @@ def pipeline_signature(seed_path: Path) -> str:
                  SCRIPT_DIRECTORY / "evaluation.py", seed_path):
         digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+def load_reusable_cache(cache_path: Path, signature: str) -> Optional[Dict[str, Any]]:
+    if not cache_path.exists():
+        return None
+    try:
+        with cache_path.open("r", encoding="utf-8") as file:
+            cache = json.load(file)
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    evaluation = cache.get("evaluation")
+    if (cache.get("space_pipeline_signature") != signature
+            or cache.get("space_diagnostics", {}).get("schema_version") != 3
+            or "topological_edges" not in cache
+            or not isinstance(evaluation, dict)
+            or "confusion_matrix" not in evaluation):
+        return None
+    return cache
+
+
+def reused_result(
+    step_path: Path,
+    label_path: Path,
+    cache_path: Path,
+    cache: Dict[str, Any],
+    elapsed_seconds: float = 0.0,
+) -> Dict[str, Any]:
+    return {
+        "sample_name": step_path.stem,
+        "status": "reused",
+        "step_path": str(step_path.resolve()),
+        "label_path": str(label_path.resolve()),
+        "cache_path": str(cache_path.resolve()),
+        "face_count": int(cache.get("face_count", len(cache.get("faces", [])))),
+        "predicted_instance_count": int(
+            cache.get("feature_instance_count", len(cache.get("instances", [])))
+        ),
+        "evaluation": cache["evaluation"],
+        "elapsed_seconds": elapsed_seconds,
+    }
+
+
+def partition_samples(
+    sample_pairs: List[Tuple[Path, Path]],
+    web_cache_root: Path,
+    signature: str,
+) -> Tuple[List[Dict[str, Any]], List[Tuple[Path, Path]]]:
+    reused = []
+    pending = []
+    for step_path, label_path in sample_pairs:
+        cache_path = web_cache_root / f"{step_path.stem}.json"
+        cache = (
+            load_reusable_cache(cache_path, signature)
+            if label_path.exists()
+            else None
+        )
+        if cache is None:
+            pending.append((step_path, label_path))
+        else:
+            reused.append(reused_result(step_path, label_path, cache_path, cache))
+    return reused, pending
 
 
 def process_one_sample(
@@ -74,24 +135,15 @@ def process_one_sample(
             raise FileNotFoundError(f"Missing label JSON: {label_path}")
 
         signature = pipeline_signature(seed_path)
-        cache = None
-        if cache_path.exists() and not overwrite_existing:
-            with cache_path.open("r", encoding="utf-8") as file:
-                cache = json.load(file)
-        if (cache is not None and cache.get("space_pipeline_signature") == signature
-                and cache.get("space_diagnostics", {}).get("schema_version") == 2
-                and "topological_edges" in cache):
-            return {
-                "sample_name": step_path.stem,
-                "status": "reused",
-                "step_path": str(step_path.resolve()),
-                "label_path": str(label_path.resolve()),
-                "cache_path": str(cache_path.resolve()),
-                "face_count": int(cache.get("face_count", len(cache.get("faces", [])))),
-                "predicted_instance_count": int(cache.get("feature_instance_count", len(cache.get("instances", [])))),
-                "evaluation": cache["evaluation"],
-                "elapsed_seconds": time.perf_counter() - sample_started_at,
-            }
+        cache = None if overwrite_existing else load_reusable_cache(cache_path, signature)
+        if cache is not None:
+            return reused_result(
+                step_path,
+                label_path,
+                cache_path,
+                cache,
+                time.perf_counter() - sample_started_at,
+            )
 
         with redirect_stdout(captured_output):
             legacy.PRINT_MATCH_DETAILS = False
@@ -185,11 +237,19 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=SAMPLE_LIMIT)
     parser.add_argument("--output-root", type=Path, default=BATCH_OUTPUT_ROOT)
     parser.add_argument("--workers", type=int, default=WORKER_COUNT)
+    parser.set_defaults(redo_current=REDO_CURRENT)
     parser.add_argument(
+        "--redo-current",
         "--overwrite",
+        dest="redo_current",
         action="store_true",
-        default=OVERWRITE_EXISTING,
-        help="Recompute samples whose web cache already exists.",
+        help="Recompute all selected samples and overwrite their current outputs.",
+    )
+    parser.add_argument(
+        "--no-redo-current",
+        dest="redo_current",
+        action="store_false",
+        help="Reuse valid current outputs and process only missing or stale samples.",
     )
     return parser.parse_args()
 
@@ -216,15 +276,39 @@ def main() -> None:
     print(f"Selected samples: {len(sample_pairs)}")
     print(f"Batch output: {output_root}")
     print(f"Worker processes: {workers}")
+    print(f"Redo current outputs: {bool(arguments.redo_current)}")
 
     started_at = time.perf_counter()
-    results: List[Dict[str, Any]] = []
+    if arguments.redo_current:
+        results: List[Dict[str, Any]] = []
+        pending_pairs = sample_pairs
+    else:
+        signature = pipeline_signature(FEATURE_SEED_JSON_PATH)
+        results, pending_pairs = partition_samples(
+            sample_pairs,
+            web_cache_root,
+            signature,
+        )
+    print(f"Reused current samples: {len(results)}")
+    print(f"Samples to process: {len(pending_pairs)}")
+
+    summary = summary_payload(
+        dataset_root,
+        arguments.limit,
+        len(sample_pairs),
+        results,
+        started_at,
+    )
+    write_json(summary_path, summary)
+    if summary["evaluation"]:
+        batch_common.write_per_class_csv(per_class_csv_path, summary["evaluation"])
+
     futures = {}
     with ProcessPoolExecutor(
         max_workers=workers,
         mp_context=get_context("spawn"),
     ) as executor:
-        for step_path, label_path in sample_pairs:
+        for step_path, label_path in pending_pairs:
             cache_path = web_cache_root / f"{step_path.stem}.json"
             future = executor.submit(
                 process_one_sample,
@@ -232,18 +316,20 @@ def main() -> None:
                 str(label_path.resolve()),
                 str(FEATURE_SEED_JSON_PATH.resolve()),
                 str(cache_path.resolve()),
-                bool(arguments.overwrite),
+                bool(arguments.redo_current),
             )
             futures[future] = step_path.stem
 
-        for completed_index, future in enumerate(as_completed(futures), start=1):
+        completed_count = len(results)
+        for future in as_completed(futures):
             result = future.result()
             results.append(result)
+            completed_count += 1
             status = result.get("status", "failed").upper()
             if status in {"SUCCESS", "REUSED"}:
                 evaluation = result["evaluation"]
                 print(
-                    f"[{completed_index:03d}/{len(sample_pairs):03d}] "
+                    f"[{completed_count:03d}/{len(sample_pairs):03d}] "
                     f"{result['sample_name']} {status} "
                     f"faces={result.get('face_count', 0)} "
                     f"instances={result.get('predicted_instance_count', 0)} "
@@ -251,7 +337,7 @@ def main() -> None:
                 )
             else:
                 print(
-                    f"[{completed_index:03d}/{len(sample_pairs):03d}] "
+                    f"[{completed_count:03d}/{len(sample_pairs):03d}] "
                     f"{result['sample_name']} FAILED "
                     f"{result.get('error_type')}: {result.get('error_message')}"
                 )

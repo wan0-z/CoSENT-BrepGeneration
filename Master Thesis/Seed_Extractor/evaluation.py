@@ -22,7 +22,6 @@ IGNORED_GROUND_TRUTH_CATEGORY_IDS = {
     23,  # round / fillet
 }
 
-
 def normalize_category_id(category_id: int) -> int:
     category_id = int(category_id)
     return int(CATEGORY_NORMALIZATION.get(category_id, category_id))
@@ -40,12 +39,154 @@ def category_name(category_id: int, category_names: Sequence[str]) -> str:
     return str(category_id)
 
 
+def seed_surface_node_counts_from_features(
+    features: Sequence[Dict[str, Any]],
+) -> Dict[int, int]:
+    """Return the supporting-surface count required by each seed graph."""
+    result: Dict[int, int] = {}
+    for feature in features:
+        category_id = normalize_category_id(int(feature["category_id"]))
+        surface_graph = feature.get("surface_graph", {})
+        nodes = surface_graph.get("nodes", feature.get("nodes", []))
+        result[category_id] = max(result.get(category_id, 0), len(nodes))
+    return result
+
+
+def find_invalid_ground_truth_instances(
+    faces: Sequence[Dict[str, Any]],
+    seed_surface_node_counts: Dict[int, int],
+    category_names: Sequence[str] = (),
+    collision_diagnostics: Sequence[Dict[str, Any]] = (),
+) -> List[Dict[str, Any]]:
+    """Find GT instances that must be excluded before metric calculation.
+
+    An instance is invalid when its unique supporting-surface count differs
+    from the seed graph node count, or when GT replay fails collision checking
+    and the collision domain contains points sampled from a chamfer/round face
+    connected to the instance.
+    """
+    grouped: Dict[Tuple[int, int], List[Dict[str, Any]]] = defaultdict(list)
+    for face in faces:
+        raw_category_id = int(face["ground_truth_category_id"])
+        instance_id = face.get("ground_truth_instance_id")
+        if (
+            instance_id is None
+            or raw_category_id == STOCK_CATEGORY_ID
+            or raw_category_id in IGNORED_GROUND_TRUTH_CATEGORY_IDS
+        ):
+            continue
+        grouped[(int(instance_id), raw_category_id)].append(face)
+
+    invalid_instances: List[Dict[str, Any]] = []
+    collision_by_instance: Dict[Tuple[int, int], Dict[str, Any]] = {}
+    for diagnostic in collision_diagnostics:
+        collision = diagnostic.get("collision") or diagnostic.get(
+            "finite_collision_domain"
+        ) or {}
+        contacts = diagnostic.get("collision_modifier_face_contacts", [])
+        if collision.get("status") != "collision_detected" or not contacts:
+            continue
+        key = (
+            int(diagnostic["gt_instance_id"]),
+            normalize_category_id(int(diagnostic["category_id"])),
+        )
+        collision_by_instance[key] = {
+            "collision_volume": collision.get("collision_volume"),
+            "volume_tolerance": collision.get("volume_tolerance"),
+            "modifier_face_contacts": contacts,
+        }
+
+    for (instance_id, raw_category_id), instance_faces in grouped.items():
+        normalized_id = normalize_category_id(raw_category_id)
+        face_ids = sorted(int(face["face_id"]) for face in instance_faces)
+        seed_surface_node_count = int(
+            seed_surface_node_counts.get(normalized_id, 0)
+        )
+        supporting_surface_keys = set()
+        for face in instance_faces:
+            support_key = face.get("surface_support_key")
+            if support_key is None:
+                support_key = ["unknown_face", int(face["face_id"])]
+            supporting_surface_keys.add(
+                json.dumps(
+                    support_key,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+        supporting_surface_count = len(supporting_surface_keys)
+        reasons: List[str] = []
+        collision_evidence = collision_by_instance.get(
+            (instance_id, normalized_id)
+        )
+
+        if (
+            seed_surface_node_count
+            and supporting_surface_count < seed_surface_node_count
+        ):
+            reasons.append("below_seed_supporting_surface_count")
+        if (
+            seed_surface_node_count
+            and supporting_surface_count > seed_surface_node_count
+        ):
+            reasons.append("above_seed_supporting_surface_count")
+
+        if collision_evidence:
+            reasons.append("collision_contains_connected_chamfer_or_round")
+
+        if reasons:
+            invalid_instances.append(
+                {
+                    "ground_truth_instance_id": instance_id,
+                    "category_id": raw_category_id,
+                    "normalized_category_id": normalized_id,
+                    "category_name": category_name(
+                        raw_category_id, category_names
+                    ),
+                    "face_ids": face_ids,
+                    "face_count": len(face_ids),
+                    "seed_surface_node_count": seed_surface_node_count,
+                    "supporting_surface_count": supporting_surface_count,
+                    "reasons": reasons,
+                    "collision_evidence": collision_evidence,
+                }
+            )
+
+    return sorted(
+        invalid_instances,
+        key=lambda item: (
+            int(item["category_id"]),
+            int(item["ground_truth_instance_id"]),
+        ),
+    )
+
+
+def annotate_invalid_label_faces(
+    faces: Sequence[Dict[str, Any]],
+    invalid_instances: Sequence[Dict[str, Any]],
+) -> None:
+    """Attach invalid-label metadata to face records in place."""
+    reason_by_face: Dict[int, Set[str]] = defaultdict(set)
+    for instance in invalid_instances:
+        for face_id in instance.get("face_ids", []):
+            reason_by_face[int(face_id)].update(instance.get("reasons", []))
+    for face in faces:
+        reasons = sorted(reason_by_face.get(int(face["face_id"]), set()))
+        face["invalid_label"] = bool(reasons)
+        face["invalid_label_reasons"] = reasons
+
+
 def build_ground_truth_instances(
     faces: Sequence[Dict[str, Any]],
+    excluded_face_ids: Optional[Set[int]] = None,
 ) -> Set[Tuple[int, Tuple[int, ...]]]:
     grouped_faces: Dict[Tuple[int, int], Set[int]] = defaultdict(set)
+    excluded_face_ids = excluded_face_ids or set()
 
     for face in faces:
+        if int(face["face_id"]) in excluded_face_ids:
+            continue
         true_category_id = int(face["ground_truth_category_id"])
         if true_category_id in IGNORED_GROUND_TRUTH_CATEGORY_IDS:
             continue
@@ -66,7 +207,9 @@ def build_ground_truth_instances(
 
 def build_predicted_instances(
     instances: Sequence[Dict[str, Any]],
+    excluded_face_ids: Optional[Set[int]] = None,
 ) -> Set[Tuple[int, Tuple[int, ...]]]:
+    excluded_face_ids = excluded_face_ids or set()
     return {
         (
             normalize_category_id(int(instance["category_id"])),
@@ -74,6 +217,9 @@ def build_predicted_instances(
         )
         for instance in instances
         if instance.get("face_ids")
+        and not excluded_face_ids.intersection(
+            int(face_id) for face_id in instance.get("face_ids", [])
+        )
     }
 
 
@@ -82,7 +228,22 @@ def calculate_evaluation(
     instances: Sequence[Dict[str, Any]],
     category_names: Sequence[str],
     target_category_ids: Optional[Iterable[int]] = None,
+    seed_surface_node_counts: Optional[Dict[int, int]] = None,
+    invalid_instances: Optional[Sequence[Dict[str, Any]]] = None,
+    collision_diagnostics: Sequence[Dict[str, Any]] = (),
 ) -> Dict[str, Any]:
+    if invalid_instances is None:
+        invalid_instances = find_invalid_ground_truth_instances(
+            faces,
+            seed_surface_node_counts or {},
+            category_names,
+            collision_diagnostics,
+        )
+    invalid_face_ids = {
+        int(face_id)
+        for instance in invalid_instances
+        for face_id in instance.get("face_ids", [])
+    }
     if target_category_ids is None:
         target_ids = {
             normalize_category_id(int(face["ground_truth_category_id"]))
@@ -112,7 +273,10 @@ def calculate_evaluation(
 
     for face in faces:
         true_raw = int(face["ground_truth_category_id"])
-        if true_raw in IGNORED_GROUND_TRUTH_CATEGORY_IDS:
+        if (
+            true_raw in IGNORED_GROUND_TRUTH_CATEGORY_IDS
+            or int(face["face_id"]) in invalid_face_ids
+        ):
             ignored_face_ids.append(int(face["face_id"]))
             continue
 
@@ -169,14 +333,21 @@ def calculate_evaluation(
             }
         )
 
-    ground_truth_instances = build_ground_truth_instances(faces)
-    predicted_instances = build_predicted_instances(instances)
+    ground_truth_instances = build_ground_truth_instances(
+        faces, invalid_face_ids
+    )
+    predicted_instances = build_predicted_instances(
+        instances, invalid_face_ids
+    )
     exact_instances = ground_truth_instances.intersection(predicted_instances)
     instance_precision = safe_divide(len(exact_instances), len(predicted_instances))
     instance_recall = safe_divide(len(exact_instances), len(ground_truth_instances))
 
     return {
-        "evaluation_scope": "target machining classes plus stock; chamfer and round ignored",
+        "evaluation_scope": (
+            "target machining classes plus stock; chamfer, round, and invalid "
+            "ground-truth instances ignored"
+        ),
         "category_normalization": {
             str(source): target for source, target in CATEGORY_NORMALIZATION.items()
         },
@@ -184,6 +355,9 @@ def calculate_evaluation(
             IGNORED_GROUND_TRUTH_CATEGORY_IDS
         ),
         "ignored_face_ids": sorted(ignored_face_ids),
+        "invalid_label_face_ids": sorted(invalid_face_ids),
+        "invalid_label_instance_count": len(invalid_instances),
+        "invalid_label_instances": list(invalid_instances),
         "evaluated_face_count": len(evaluated_pairs),
         "correct_face_count": correct_count,
         "face_accuracy": safe_divide(correct_count, len(evaluated_pairs)),
@@ -269,6 +443,10 @@ def main() -> None:
             .get("confusion_matrix", {})
             .get("label_ids")
         ),
+        invalid_instances=cache.get("invalid_label_instances"),
+        collision_diagnostics=cache.get(
+            "invalid_label_collision_diagnostics", []
+        ) or cache.get("space_diagnostics", {}).get("gt_instances", []),
     )
 
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
