@@ -33,12 +33,12 @@ DATASET_ROOT = (
 )
 
 # Change this value to control how many naturally sorted samples are processed.
-SAMPLE_LIMIT = 200
+SAMPLE_LIMIT = 2000
 
 FEATURE_SEED_JSON_PATH = SCRIPT_DIRECTORY / "data" / "feature_space_seeds.json"
 BATCH_OUTPUT_ROOT = SCRIPT_DIRECTORY / "output_space" / "batch"
 WORKER_COUNT = min(4, max(1, os.cpu_count() or 1))
-REDO_CURRENT = True
+REDO_CURRENT = False
 # ====================================================================
 
 

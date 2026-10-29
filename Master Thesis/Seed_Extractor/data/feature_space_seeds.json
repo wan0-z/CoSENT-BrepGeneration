@@ -74,7 +74,7 @@
       "name":"through_hole",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","orientation_sign":-1}],
       "edges":[],
       "surface_constraints":{"group_constraints":[]},
       "face_constraints":
@@ -373,7 +373,7 @@
       "name":"circular_through_slot",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"}],
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","orientation_sign":-1}],
       "edges":[],
       "surface_constraints":{"group_constraints":[]},
       "face_constraints":{
@@ -511,9 +511,9 @@
       "name":"Oring",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"outer_cylindrical_wall","surface_type":"cylinder"},
+      [{"id":0,"role":"outer_cylindrical_wall","surface_type":"cylinder","orientation_sign":-1},
       {"id":1,"role":"annular_bottom","surface_type":"plane"},
-      {"id":2,"role":"inner_cylindrical_wall","surface_type":"cylinder"}],
+      {"id":2,"role":"inner_cylindrical_wall","surface_type":"cylinder","orientation_sign":1}],
       "edges":
       [{"nodes":[0,1],"code":"01001"},
       {"nodes":[0,2],"code":"11110"},
@@ -554,7 +554,7 @@
       "name":"blind_hole",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"},
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","orientation_sign":-1},
       {"id":1,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01001"}],
@@ -776,9 +776,9 @@
       "space_model":"trimmed_boundary_cell",
       "nodes":
       [{"id":0,"role":"straight_side_0","surface_type":"plane"},
-      {"id":1,"role":"circular_end_0","surface_type":"cylinder"},
+      {"id":1,"role":"circular_end_0","surface_type":"cylinder","orientation_sign":-1},
       {"id":2,"role":"straight_side_1","surface_type":"plane"},
-      {"id":3,"role":"circular_end_1","surface_type":"cylinder"},
+      {"id":3,"role":"circular_end_1","surface_type":"cylinder","orientation_sign":-1},
       {"id":4,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01110"},
@@ -905,7 +905,7 @@
       "space_model":"trimmed_boundary_cell",
       "nodes":
       [{"id":0,"role":"straight_side_0","surface_type":"plane"},
-      {"id":1,"role":"circular_end","surface_type":"cylinder"},
+      {"id":1,"role":"circular_end","surface_type":"cylinder","orientation_sign":-1},
       {"id":2,"role":"straight_side_1","surface_type":"plane"},
       {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
@@ -975,9 +975,9 @@
       "name":"h_circular_end_blind_slot",
       "space_model":"trimmed_boundary_cell",
       "nodes":
-      [{"id":0,"role":"circular_end_0","surface_type":"cylinder"},
+      [{"id":0,"role":"circular_end_0","surface_type":"cylinder","orientation_sign":-1},
       {"id":1,"role":"straight_side","surface_type":"plane"},
-      {"id":2,"role":"circular_end_1","surface_type":"cylinder"},
+      {"id":2,"role":"circular_end_1","surface_type":"cylinder","orientation_sign":-1},
       {"id":3,"role":"bottom","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01110"},
@@ -1053,7 +1053,7 @@
       "name":"circular_blind_step",
       "space_model":"global_oriented_support_cell",
       "nodes":
-      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder"},
+      [{"id":0,"role":"cylindrical_wall","surface_type":"cylinder","orientation_sign":-1},
       {"id":1,"role":"floor","surface_type":"plane"}],
       "edges":
       [{"nodes":[0,1],"code":"01001"}],

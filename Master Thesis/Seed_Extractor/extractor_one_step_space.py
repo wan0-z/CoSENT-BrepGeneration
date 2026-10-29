@@ -227,6 +227,12 @@ def candidate_nodes(graph: nx.Graph, seed_node: Dict[str, Any]) -> List[int]:
     for node_id, attributes in graph.nodes(data=True):
         if attributes["surface_type"] != seed_node["surface_type"]:
             continue
+        required_orientation = seed_node.get("orientation_sign")
+        if (
+            required_orientation is not None
+            and int(attributes["orientation_sign"]) != int(required_orientation)
+        ):
+            continue
         result.append(int(node_id))
     return result
 
